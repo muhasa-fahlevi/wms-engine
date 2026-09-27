@@ -443,41 +443,34 @@
 			</div>
             <!-- ================= VIEW: WIDGET MONITOR RUNNING TABLE (Dynamic) ================= -->
             <div id="page-widget-table" class="page-content hidden space-y-4">
-                <div class="flex items-center gap-3">
-                    <button onclick="navTo('page-dashboard')" class="p-2 bg-white rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
-                        <i class="ri-arrow-left-line text-lg"></i>
-                    </button>
-                    <div>
-                        <h2 id="widget-table-title" class="text-xl font-bold text-slate-800">Running Table</h2>
-                        <p class="text-xs text-slate-500">Halaman khusus tabel running monitor kategori terpilih.</p>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div class="p-4 border-b border-slate-100 flex justify-between items-center">
-                        <span class="text-xs font-semibold uppercase text-slate-400">Live Running Stream</span>
-                        <span class="px-2.5 py-1 bg-emerald-50 text-emerald-600 text-xs rounded-full font-medium flex items-center gap-1">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Live Update
-                        </span>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-xs">
-                            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
-                                <tr>
-                                    <th class="p-3.5 font-semibold">Tanggal</th>
-                                    <th class="p-3.5 font-semibold">ID Transaksi</th>
-                                    <th class="p-3.5 font-semibold">ID / Kode Item</th>
-                                    <th class="p-3.5 font-semibold">Nama Description</th>
-                                    <th class="p-3.5 font-semibold">Lokasi</th>
-                                    <th class="p-3.5 font-semibold">Qty</th>
-                                    <th class="p-3.5 font-semibold">Status Running</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-100 text-slate-700">
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+            <div class="flex items-center gap-3">
+            <button onclick="navTo('page-dashboard')" class="p-2 bg-white rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
+            <i class="ri-arrow-left-line text-lg"></i>
+            </button>
+            <div>
+            <h2 id="widget-table-title" class="text-xl font-bold text-slate-800">Running Table</h2>
+            <p class="text-xs text-slate-500">Halaman khusus tabel running monitor kategori terpilih.</p>
+            </div>
+            </div>
+            
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-slate-100 flex justify-between items-center">
+            <span class="text-xs font-semibold uppercase text-slate-400">Live Running Stream</span>
+            <span class="px-2.5 py-1 bg-emerald-50 text-emerald-600 text-xs rounded-full font-medium flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Live Update
+            </span>
+            </div>
+            <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+            <thead id="widget-table-head" class="bg-slate-50 text-slate-500 border-b border-slate-200">
+            <!-- Header kolom akan di-set dinamis oleh JS -->
+            </thead>
+            <tbody id="widget-table-body" class="divide-y divide-slate-100 text-slate-700">
+            <!-- Data akan di-clone dari tabel sumber oleh JS -->
+            </tbody>
+            </table>
+            </div>
+            </div>
             </div>
 
             <!-- ================= PAGE TEMPLATE: PENYIMPANAN MATERIAL SPAREPART ================= -->

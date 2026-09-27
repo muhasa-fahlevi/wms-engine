@@ -42,3 +42,22 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* Standarisasi tampilan semua tabel running */
+table thead th {
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #64748b;
+}
+
+table tbody td {
+    font-size: 12px;
+    padding: 12px;
+    vertical-align: middle;
+}
+
+table tbody tr:hover {
+    background-color: #fafbff;
+}

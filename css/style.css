@@ -1,0 +1,33 @@
+/* Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
+body {
+    font-family: 'Poppins', sans-serif;
+}
+
+/* Custom Smooth Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Submenu Accordion Transition */
+.submenu-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-in-out;
+}
+.submenu-content.open { max-height: 500px; }
+
+/* Class Active Tab */
+.sidebar-btn.active-tab {
+    background-color: #eff6ff !important;
+    color: #2563eb !important;
+    font-weight: 600 !important;
+}
+
+/* Toast Animation */
+#toastContainer { transition: all 0.3s ease-in-out; }
+
+/* Smooth Chart Animation */
+.sparkline-path { transition: d 0.5s ease, stroke 0.3s ease; }

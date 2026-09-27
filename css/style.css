@@ -31,3 +31,14 @@ body {
 
 /* Smooth Chart Animation */
 .sparkline-path { transition: d 0.5s ease, stroke 0.3s ease; }
+/* Sparkline responsive */
+.sparkline-path {
+    transition: d 0.5s ease, stroke 0.3s ease;
+}
+
+/* Prevent card overflow saat ada teks panjang */
+.group h3 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

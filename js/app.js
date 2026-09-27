@@ -370,27 +370,35 @@ function navTo(pageId, btn) {
 }
 
 function openWidgetRunning(title) {
-    // Map widget title → halaman tujuan
-    const pageMap = {
-        'Material Inbound':       'page-inbound-sparepart',
-        'Material Outbound':      'page-outbound-prep',
-        'FG Inbound':             'page-fg-inbound',
-        'FG Outbound':            'page-fg-outbound',
-        'Antrean Picking':        'page-antrean-picking',
-        'Kapasitas Pallet Engine':'page-pallet-engine'
+    // Map widget → id tabel sumber
+    const tableMap = {
+        'Material Inbound':        'inboundTableBody',
+        'Material Outbound':       'outboundTableBody',
+        'FG Inbound':              'fgInboundTableBody',
+        'FG Outbound':             'fgOutboundTableBody',
+        'Antrean Picking':         null, // belum ada sumber
+        'Kapasitas Pallet Engine': 'palletRunningTableBody'
     };
 
-    const targetPage = pageMap[title];
+    const el = document.getElementById('widget-table-title');
+    if (el) el.innerText = `Running Table - ${title}`;
 
-    if (targetPage && document.getElementById(targetPage)) {
-        // Arahkan ke halaman yang sesuai
-        navTo(targetPage);
+    // Ambil isi tabel dari sumber, clone ke widget table
+    const sourceId = tableMap[title];
+    const widgetTbody = document.querySelector('#page-widget-table tbody');
+    
+    if (sourceId && widgetTbody) {
+        const sourceTbody = document.getElementById(sourceId);
+        if (sourceTbody) {
+            widgetTbody.innerHTML = sourceTbody.innerHTML;
+        } else {
+            widgetTbody.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400">Belum ada data</td></tr>';
+        }
     } else {
-        // Fallback: kalau belum di-map, pakai halaman generic
-        const el = document.getElementById('widget-table-title');
-        if (el) el.innerText = `Running Table - ${title}`;
-        navTo('page-widget-table');
+        widgetTbody.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400">Belum ada data</td></tr>';
     }
+
+    navTo('page-widget-table');
 }
 
 function switchRakTab(type) {

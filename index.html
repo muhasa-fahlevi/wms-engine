@@ -258,22 +258,22 @@
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
 
     <!-- Widget 1: Material Inbound -->
-    <div onclick="openWidgetRunning('Material Inbound')" class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+    <div onclick="openWidgetRunning('Material Inbound')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
         <div class="absolute -top-10 -right-10 w-28 h-28 bg-blue-50/70 rounded-full pointer-events-none"></div>
 
-        <div class="flex items-start justify-between gap-3 mb-3 relative z-10">
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
             <div class="min-w-0 flex-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">ACTIVITY INBOUND</span>
-                <h3 class="text-sm font-bold text-slate-800 tracking-tight mt-0.5 truncate">Material Inbound</h3>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">ACTIVITY INBOUND</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">Material Inbound</h3>
             </div>
-            <div class="w-9 h-9 shrink-0 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                <i class="ri-download-2-line text-lg"></i>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                <i class="ri-download-2-line text-xl"></i>
             </div>
         </div>
 
-        <div class="flex items-end justify-between gap-3 relative z-10">
-            <div class="flex items-baseline gap-1.5 min-w-0">
-                <span id="card-inbound-val" class="text-2xl font-bold text-blue-600 leading-none">0</span>
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-inbound-val" class="text-3xl font-bold text-blue-600 leading-none">0</span>
                 <span class="text-xs text-slate-400 font-medium">Items</span>
             </div>
             <div class="w-16 h-8 shrink-0">
@@ -283,29 +283,29 @@
             </div>
         </div>
 
-        <div class="pt-3 mt-3 border-t border-slate-50 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
             <span class="truncate">Status: Running Active</span>
             <i class="ri-arrow-right-line text-blue-600 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
         </div>
     </div>
 
     <!-- Widget 2: Material Outbound -->
-    <div onclick="openWidgetRunning('Material Outbound')" class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+    <div onclick="openWidgetRunning('Material Outbound')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
         <div class="absolute -top-10 -right-10 w-28 h-28 bg-orange-50/70 rounded-full pointer-events-none"></div>
 
-        <div class="flex items-start justify-between gap-3 mb-3 relative z-10">
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
             <div class="min-w-0 flex-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">ACTIVITY OUTBOUND</span>
-                <h3 class="text-sm font-bold text-slate-800 tracking-tight mt-0.5 truncate">Material Outbound</h3>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">ACTIVITY OUTBOUND</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">Material Outbound</h3>
             </div>
-            <div class="w-9 h-9 shrink-0 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center group-hover:bg-orange-500 group-hover:text-white transition-colors">
-                <i class="ri-upload-2-line text-lg"></i>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center group-hover:bg-orange-500 group-hover:text-white transition-colors">
+                <i class="ri-upload-2-line text-xl"></i>
             </div>
         </div>
 
-        <div class="flex items-end justify-between gap-3 relative z-10">
-            <div class="flex items-baseline gap-1.5 min-w-0">
-                <span id="card-outbound-val" class="text-2xl font-bold text-orange-500 leading-none">0</span>
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-outbound-val" class="text-3xl font-bold text-orange-500 leading-none">0</span>
                 <span class="text-xs text-slate-400 font-medium">Items</span>
             </div>
             <div class="w-16 h-8 shrink-0">
@@ -315,29 +315,29 @@
             </div>
         </div>
 
-        <div class="pt-3 mt-3 border-t border-slate-50 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
             <span class="truncate">Status: Running Active</span>
             <i class="ri-arrow-right-line text-orange-500 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
         </div>
     </div>
 
     <!-- Widget 3: FinishGood Inbound -->
-    <div onclick="openWidgetRunning('FG Inbound')" class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+    <div onclick="openWidgetRunning('FG Inbound')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
         <div class="absolute -top-10 -right-10 w-28 h-28 bg-emerald-50/70 rounded-full pointer-events-none"></div>
 
-        <div class="flex items-start justify-between gap-3 mb-3 relative z-10">
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
             <div class="min-w-0 flex-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">FINISHGOOD</span>
-                <h3 class="text-sm font-bold text-slate-800 tracking-tight mt-0.5 truncate">FinishGood Inbound</h3>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">FINISHGOOD</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">FinishGood Inbound</h3>
             </div>
-            <div class="w-9 h-9 shrink-0 rounded-xl bg-emerald-50 text-emerald-500 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-colors">
-                <i class="ri-checkbox-circle-line text-lg"></i>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-emerald-50 text-emerald-500 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                <i class="ri-checkbox-circle-line text-xl"></i>
             </div>
         </div>
 
-        <div class="flex items-end justify-between gap-3 relative z-10">
-            <div class="flex items-baseline gap-1.5 min-w-0">
-                <span id="card-fg-inbound-val" class="text-2xl font-bold text-emerald-500 leading-none">0</span>
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-fg-inbound-val" class="text-3xl font-bold text-emerald-500 leading-none">0</span>
                 <span class="text-xs text-slate-400 font-medium">Pcs</span>
             </div>
             <div class="w-16 h-8 shrink-0">
@@ -347,29 +347,29 @@
             </div>
         </div>
 
-        <div class="pt-3 mt-3 border-t border-slate-50 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
             <span class="truncate">Status: Running Active</span>
             <i class="ri-arrow-right-line text-emerald-500 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
         </div>
     </div>
 
     <!-- Widget 4: FinishGood Outbound -->
-    <div onclick="openWidgetRunning('FG Outbound')" class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+    <div onclick="openWidgetRunning('FG Outbound')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
         <div class="absolute -top-10 -right-10 w-28 h-28 bg-indigo-50/70 rounded-full pointer-events-none"></div>
 
-        <div class="flex items-start justify-between gap-3 mb-3 relative z-10">
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
             <div class="min-w-0 flex-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">SHIPPING</span>
-                <h3 class="text-sm font-bold text-slate-800 tracking-tight mt-0.5 truncate">FinishGood Outbound</h3>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">SHIPPING</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">FinishGood Outbound</h3>
             </div>
-            <div class="w-9 h-9 shrink-0 rounded-xl bg-indigo-50 text-indigo-500 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition-colors">
-                <i class="ri-truck-line text-lg"></i>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-indigo-50 text-indigo-500 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                <i class="ri-truck-line text-xl"></i>
             </div>
         </div>
 
-        <div class="flex items-end justify-between gap-3 relative z-10">
-            <div class="flex items-baseline gap-1.5 min-w-0">
-                <span id="card-fg-outbound-val" class="text-2xl font-bold text-indigo-600 leading-none">0</span>
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-fg-outbound-val" class="text-3xl font-bold text-indigo-600 leading-none">0</span>
                 <span class="text-xs text-slate-400 font-medium">Unit</span>
             </div>
             <div class="w-16 h-8 shrink-0">
@@ -379,61 +379,61 @@
             </div>
         </div>
 
-        <div class="pt-3 mt-3 border-t border-slate-50 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
             <span class="truncate">Status: Running Active</span>
             <i class="ri-arrow-right-line text-indigo-600 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
         </div>
     </div>
 
     <!-- Widget 5: Antrean Picking -->
-    <div onclick="openWidgetRunning('Antrean Picking')" class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+    <div onclick="openWidgetRunning('Antrean Picking')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
         <div class="absolute -top-10 -right-10 w-28 h-28 bg-amber-50/70 rounded-full pointer-events-none"></div>
 
-        <div class="flex items-start justify-between gap-3 mb-3 relative z-10">
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
             <div class="min-w-0 flex-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">QUEUE TASK</span>
-                <h3 class="text-sm font-bold text-slate-800 tracking-tight mt-0.5 truncate">Antrean Picking</h3>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">QUEUE TASK</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">Antrean Picking</h3>
             </div>
-            <div class="w-9 h-9 shrink-0 rounded-xl bg-amber-50 text-amber-500 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-colors">
-                <i class="ri-time-line text-lg"></i>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-amber-50 text-amber-500 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                <i class="ri-time-line text-xl"></i>
             </div>
         </div>
 
-        <div class="flex items-end justify-between gap-3 relative z-10">
-            <div class="flex items-baseline gap-1.5 min-w-0">
-                <span id="card-picking-val" class="text-2xl font-bold text-amber-500 leading-none">0</span>
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-picking-val" class="text-3xl font-bold text-amber-500 leading-none">0</span>
             </div>
-            <span class="text-[10px] text-amber-600 font-semibold bg-amber-50 px-2 py-1 rounded-full whitespace-nowrap shrink-0">Pending Tasks</span>
+            <span class="text-[10px] text-amber-600 font-semibold bg-amber-50 px-2.5 py-1 rounded-full whitespace-nowrap shrink-0">Pending Tasks</span>
         </div>
 
-        <div class="pt-3 mt-3 border-t border-slate-50 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
             <span class="truncate">Status: High Priority</span>
             <i class="ri-arrow-right-line text-amber-500 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
         </div>
     </div>
 
     <!-- Widget 6: Kapasitas Pallet Engine -->
-    <div onclick="openWidgetRunning('Kapasitas Pallet Engine')" class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+    <div onclick="openWidgetRunning('Kapasitas Pallet Engine')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
         <div class="absolute -top-10 -right-10 w-28 h-28 bg-purple-50/70 rounded-full pointer-events-none"></div>
 
-        <div class="flex items-start justify-between gap-3 mb-3 relative z-10">
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
             <div class="min-w-0 flex-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">STORAGE UNIT</span>
-                <h3 class="text-sm font-bold text-slate-800 tracking-tight mt-0.5 truncate">Pallet Engine</h3>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">STORAGE UNIT</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">Pallet Engine</h3>
             </div>
-            <div class="w-9 h-9 shrink-0 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors">
-                <i class="ri-archive-2-line text-lg"></i>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                <i class="ri-archive-2-line text-xl"></i>
             </div>
         </div>
 
-        <div class="flex items-end justify-between gap-3 relative z-10">
-            <div class="flex items-baseline gap-1.5 min-w-0">
-                <span id="card-pallet-val" class="text-2xl font-bold text-purple-600 leading-none">0%</span>
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-pallet-val" class="text-3xl font-bold text-purple-600 leading-none">0%</span>
                 <span class="text-xs text-slate-400 font-medium">Occupied</span>
             </div>
         </div>
 
-        <div class="pt-3 mt-3 border-t border-slate-50 relative z-10">
+        <div class="pt-4 mt-auto border-t border-slate-100 relative z-10">
             <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                 <div id="card-pallet-progress" class="bg-purple-600 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
             </div>

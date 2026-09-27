@@ -369,35 +369,67 @@ function navTo(pageId, btn) {
     }
 }
 
+// ============================================
+// KONFIGURASI TABEL PER WIDGET
+// Setiap widget punya header & sumber tabel sendiri
+// ============================================
+const WIDGET_TABLE_CONFIG = {
+    'Material Inbound': {
+        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode SAP', 'Nama Material', 'Batch', 'Qty'],
+        sourceTbody: 'inboundTableBody'
+    },
+    'Material Outbound': {
+        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode SAP', 'Nama Material', 'Batch', 'Qty Out'],
+        sourceTbody: 'outboundTableBody'
+    },
+    'FG Inbound': {
+        headers: ['Tanggal', 'ID Transaksi', 'Engine ID', 'Pallet ID', 'Qty', 'Pallet Terpakai'],
+        sourceTbody: 'fgInboundTableBody'
+    },
+    'FG Outbound': {
+        headers: ['Tanggal', 'ID Transaksi', 'Engine ID', 'Pallet ID', 'Qty', 'Pallet Kosong'],
+        sourceTbody: 'fgOutboundTableBody'
+    },
+    'Antrean Picking': {
+        headers: ['ID Order', 'Prioritas', 'Item', 'Lokasi Target', 'Status'],
+        sourceTbody: null // belum ada sumber, tampilkan placeholder
+    },
+    'Kapasitas Pallet Engine': {
+        headers: ['Tanggal', 'ID Transaksi', 'Pallet ID', 'Qty', 'Catatan', 'Status'],
+        sourceTbody: 'palletRunningTableBody'
+    }
+};
+
 function openWidgetRunning(title) {
-    // Map widget → id tabel sumber
-    const tableMap = {
-        'Material Inbound':        'inboundTableBody',
-        'Material Outbound':       'outboundTableBody',
-        'FG Inbound':              'fgInboundTableBody',
-        'FG Outbound':             'fgOutboundTableBody',
-        'Antrean Picking':         null, // belum ada sumber
-        'Kapasitas Pallet Engine': 'palletRunningTableBody'
+    // Ambil config widget, atau fallback ke header generic
+    const config = WIDGET_TABLE_CONFIG[title] || {
+        headers: ['Tanggal', 'ID Transaksi', 'ID/Kode Item', 'Nama Description', 'Lokasi', 'Qty', 'Status Running'],
+        sourceTbody: null
     };
 
+    // 1. Set judul halaman
     const el = document.getElementById('widget-table-title');
     if (el) el.innerText = `Running Table - ${title}`;
 
-    // Ambil isi tabel dari sumber, clone ke widget table
-    const sourceId = tableMap[title];
-    const widgetTbody = document.querySelector('#page-widget-table tbody');
-    
-    if (sourceId && widgetTbody) {
-        const sourceTbody = document.getElementById(sourceId);
-        if (sourceTbody) {
-            widgetTbody.innerHTML = sourceTbody.innerHTML;
-        } else {
-            widgetTbody.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400">Belum ada data</td></tr>';
-        }
-    } else {
-        widgetTbody.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400">Belum ada data</td></tr>';
+    // 2. Render header kolom (dinamis)
+    const thead = document.getElementById('widget-table-head');
+    if (thead) {
+        thead.innerHTML = '<tr>' + config.headers.map(h =>
+            `<th class="p-3.5 font-semibold whitespace-nowrap">${h}</th>`
+        ).join('') + '</tr>';
     }
 
+    // 3. Clone data dari tabel sumber (kalau ada)
+    if (sourceTbody && sourceTbody.children.length > 0) {
+    tbody.innerHTML = sourceTbody.innerHTML;
+    } else {
+    // Fallback: fetch dari API (nanti)
+    // const data = await API.getInbound();
+    // tbody.innerHTML = renderRows(data, config.headers.length);
+    tbody.innerHTML = `<tr><td colspan="${config.headers.length}" class="p-6 text-center text-slate-400">Belum ada data untuk kategori ini.</td></tr>`;
+    }
+
+    // 4. Navigate
     navTo('page-widget-table');
 }
 

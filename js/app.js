@@ -370,9 +370,27 @@ function navTo(pageId, btn) {
 }
 
 function openWidgetRunning(title) {
-    const el = document.getElementById('widget-table-title');
-    if (el) el.innerText = `Running Table - ${title}`;
-    navTo('page-widget-table');
+    // Map widget title → halaman tujuan
+    const pageMap = {
+        'Material Inbound':       'page-inbound-sparepart',
+        'Material Outbound':      'page-outbound-prep',
+        'FG Inbound':             'page-fg-inbound',
+        'FG Outbound':            'page-fg-outbound',
+        'Antrean Picking':        'page-antrean-picking',
+        'Kapasitas Pallet Engine':'page-pallet-engine'
+    };
+
+    const targetPage = pageMap[title];
+
+    if (targetPage && document.getElementById(targetPage)) {
+        // Arahkan ke halaman yang sesuai
+        navTo(targetPage);
+    } else {
+        // Fallback: kalau belum di-map, pakai halaman generic
+        const el = document.getElementById('widget-table-title');
+        if (el) el.innerText = `Running Table - ${title}`;
+        navTo('page-widget-table');
+    }
 }
 
 function switchRakTab(type) {

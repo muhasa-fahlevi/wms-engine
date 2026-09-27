@@ -34,7 +34,7 @@
         }
     </script>
 </head>
-<body class="bg-slate-100 text-slate-800 antialiased h-screen flex flex-col overflow-hidden">
+<body class="bg-slate-100 text-slate-800 antialiased h-screen flex flex-col overflow-hidden" style="height: 100dvh;">
 
     <!-- TOAST NOTIFICATION CONTAINER -->
     <div id="toastContainer" class="fixed top-20 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
@@ -70,7 +70,7 @@
         </div>
     </header>
 
-    <div class="flex flex-1 overflow-hidden relative">
+    <div class="flex flex-1 overflow-hidden relative min-h-0">
 
         <!-- OVERLAY MOBILE -->
         <div id="sidebarOverlay" onclick="toggleSidebar()" class="fixed inset-0 bg-slate-900/40 z-10 hidden md:hidden backdrop-blur-sm transition-opacity"></div>
@@ -249,7 +249,7 @@
 
 
         <!-- MAIN CONTENT AREA -->
-        <main class="flex-1 overflow-y-auto bg-slate-50 p-4 md:p-6 transition-all duration-300">
+        <main class="flex-1 min-h-0 overflow-y-auto bg-slate-50 p-4 md:p-6 transition-all duration-300">
             
             <!-- ================= PAGE: DASHBOARD ================= -->
             <div id="page-dashboard" class="page-content space-y-6">

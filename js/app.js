@@ -375,11 +375,11 @@ function navTo(pageId, btn) {
 // ============================================
 const WIDGET_TABLE_CONFIG = {
     'Material Inbound': {
-        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode SAP', 'Nama Material', 'Batch', 'Qty', 'Lokasi Area'],
+        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode Material (SAP)', 'Nama Material', 'Batch', 'Qty', 'Lokasi'],
         sourceTbody: 'inboundTableBody'
     },
     'Material Outbound': {
-        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode SAP', 'Nama Material', 'Batch', 'Qty Out'],
+        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode Material (SAP)', 'Nama Material', 'Batch', 'Qty Out'],
         sourceTbody: 'outboundTableBody'
     },
     'FG Inbound': {
@@ -1190,23 +1190,23 @@ function setupDatabase() {
   const tables = [
     {
       name: 'Master_Material',
-      headers: ['Kode SAP', 'Nama Material', 'Grup Area', 'Model Engine', 'SNP (Qty/Box)', 'Tanggal Input']
+      headers: ['Kode Material (SAP)', 'Nama Material', 'Lokasi', 'Engine ID', 'SNP (Qty/Box)', 'Tanggal Input']
     },
     {
       name: 'Master_BOM',
-      headers: ['BOM ID', 'Kode Engine', 'Kode SAP Material', 'Nama Material', 'Qty Per Engine', 'Satuan']
+      headers: ['BOM ID', 'Engine ID', 'Kode Material (SAP)', 'Nama Material', 'Qty Per Engine', 'Satuan']
     },
     {
       name: 'Planning_Produksi',
-      headers: ['Plan ID', 'Tanggal Plan', 'Kode Engine', 'Target Qty (Pcs)', 'Line Produksi', 'Status', 'Catatan']
+      headers: ['Plan ID', 'Tanggal Plan', 'Engine ID', 'Target Qty (Pcs)', 'Line Produksi', 'Status', 'Catatan']
     },
     {
       name: 'Inbound_Sparepart',
-      headers: ['Tanggal & Jam', 'Package ID', 'Kode SAP', 'Nama Material', 'Batch', 'Qty', 'Lokasi']
+      headers: ['Tanggal & Jam', 'Package ID', 'Kode Material (SAP)', 'Nama Material', 'Batch', 'Qty', 'Lokasi']
     },
     {
       name: 'Outbound_Sparepart',
-      headers: ['Tanggal & Jam', 'Package ID', 'Kode SAP', 'Nama Material', 'Batch', 'Qty', 'Lokasi Asal']
+      headers: ['Tanggal & Jam', 'Package ID', 'Kode Material (SAP)', 'Nama Material', 'Batch', 'Qty', 'Lokasi']
     }
   ];
 

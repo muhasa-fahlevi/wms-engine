@@ -592,10 +592,6 @@ function submitFgInbound() {
         `;
     }
 
-    const cardFgIn = document.getElementById('card-fg-inbound-val');
-    if (cardFgIn) cardFgIn.innerText = parseInt(cardFgIn.innerText || 0) + pcsInput;
-    addHistoryPoint('fgInbound', pcsInput, 'sparkline-fg-inbound');
-
     updateEngineStockUI();
     updatePalletUI();
     document.getElementById('fgEngineQtyPcs').value = '';
@@ -668,10 +664,6 @@ function submitFgOutbound() {
             <td class="p-3.5"><span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">FG Outbound</span></td>
         `;
     }
-
-    const cardFgOut = document.getElementById('card-fg-outbound-val');
-    if (cardFgOut) cardFgOut.innerText = parseInt(cardFgOut.innerText || 0) + pcsInput;
-    addHistoryPoint('fgOutbound', pcsInput, 'sparkline-fg-outbound');
 
     updateEngineStockUI();
     updatePalletUI();
@@ -804,11 +796,6 @@ function submitMaterialInbound() {
         `;
     }
 
-    dashboardData.inboundMaterial += qty;
-    const cardIn = document.getElementById('card-inbound-val');
-    if (cardIn) cardIn.innerText = parseInt(cardIn.innerText || 0) + qty;
-    addHistoryPoint('inbound', qty, 'sparkline-inbound');
-
     // Simpan ke local inventory store untuk lookup outbound
     window.inventoryStok.push({
         packageId: pkgId,
@@ -857,11 +844,6 @@ function submitMaterialOutbound() {
             <td class="p-3.5 font-bold text-rose-600">${qty} Pcs</td>
         `;
     }
-
-    dashboardData.outboundMaterial += qty;
-    const cardOut = document.getElementById('card-outbound-val');
-    if (cardOut) cardOut.innerText = parseInt(cardOut.innerText || 0) + qty;
-    addHistoryPoint('outbound', qty, 'sparkline-outbound');
 
     if (document.getElementById('outboundPackageIdInput')) document.getElementById('outboundPackageIdInput').value = '';
     if (document.getElementById('outboundSapInput')) document.getElementById('outboundSapInput').value = '';
@@ -1053,14 +1035,20 @@ function updatePalletUI() {
     if (cardProgress) cardProgress.style.width = `${occupiedPct}%`;
 }
 
-// TUNGGAL DOMContentLoaded - Inisialisasi Aplikasi Saat Halaman Selesai Load
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Jalankan Jam & Update UI Stok Awal
     setInterval(updateClock, 1000);
     updateClock();
     updateEngineStockUI();
     updatePalletUI();
 
+    // Sync counter widget dengan isi running table (per hari)
+    syncWidgetCounters();
+    ['inboundTableBody', 'outboundTableBody', 'fgInboundTableBody', 'fgOutboundTableBody']
+        .forEach(id => {
+            const el = document.getElementById(id);
+            if (el) new MutationObserver(syncWidgetCounters).observe(el, { childList: true });
+        });
+        
     // 2. Attach Event Listener Inbound Scanner
     const inboundPackageInput = document.getElementById('inboundPackageIdInput');
     if (inboundPackageInput) {
@@ -1333,4 +1321,66 @@ function doPost(e) {
 
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ==========================================================================
+   10. SYNC WIDGET COUNTER DENGAN RUNNING TABLE (PER HARI)
+   ========================================================================== */
+function syncWidgetCounters() {
+    // Ambil tanggal hari ini: "DD-MM-YY" (sesuai format getFormattedDateTime)
+    const today = getFormattedDateTime().split(',')[0].trim();
+
+    // Helper: total kolom qty dari tbody, filter tanggal = hari ini
+    const getTotalToday = (tbodyId, qtyColIndex) => {
+        const tbody = document.getElementById(tbodyId);
+        if (!tbody) return 0;
+
+        let total = 0;
+        tbody.querySelectorAll('tr').forEach(tr => {
+            const cells = tr.children;
+
+            // Cek apakah tanggal (kolom 0) = hari ini
+            const dateText = (cells[0]?.innerText || '').split(',')[0].trim();
+            if (dateText !== today) return;
+
+            // Ambil Qty
+            const qtyText = cells[qtyColIndex]?.innerText || '';
+            const num = parseFloat(qtyText.replace(/[^\d.-]/g, ''));
+            if (!isNaN(num)) total += num;
+        });
+        return total;
+    };
+
+    // ── WIDGET 1: Material Inbound (kolom Qty = index 5)
+    const c1 = document.getElementById('card-inbound-val');
+    if (c1) c1.innerText = getTotalToday('inboundTableBody', 5);
+
+    // ── WIDGET 2: Material Outbound (kolom Qty = index 5)
+    const c2 = document.getElementById('card-outbound-val');
+    if (c2) c2.innerText = getTotalToday('outboundTableBody', 5);
+
+    // ── WIDGET 3: FG Inbound (kolom Qty = index 4)
+    const c3 = document.getElementById('card-fg-inbound-val');
+    if (c3) c3.innerText = getTotalToday('fgInboundTableBody', 4);
+
+    // ── WIDGET 4: FG Outbound (kolom Qty = index 4)
+    const c4 = document.getElementById('card-fg-outbound-val');
+    if (c4) c4.innerText = getTotalToday('fgOutboundTableBody', 4);
+}
+
+    // ── WIDGET 5: Antrean Picking (jumlah baris planning)
+    const c5 = document.getElementById('card-picking-val');
+    const planBody = document.getElementById('planningTableBody');
+    if (c5 && planBody) c5.innerText = planBody.querySelectorAll('tr').length;
+
+    // ── UPDATE SPARKLINE (grafis garis)
+    const totalInbound = parseFloat(document.getElementById('card-inbound-val')?.innerText) || 0;
+    const totalOutbound = parseFloat(document.getElementById('card-outbound-val')?.innerText) || 0;
+    const totalFgInbound = parseFloat(document.getElementById('card-fg-inbound-val')?.innerText) || 0;
+    const totalFgOutbound = parseFloat(document.getElementById('card-fg-outbound-val')?.innerText) || 0;
+
+    addHistoryPoint('inbound',    totalInbound,    'sparkline-inbound');
+    addHistoryPoint('outbound',   totalOutbound,   'sparkline-outbound');
+    addHistoryPoint('fgInbound',  totalFgInbound,  'sparkline-fg-inbound');
+    addHistoryPoint('fgOutbound', totalFgOutbound, 'sparkline-fg-outbound');
 }

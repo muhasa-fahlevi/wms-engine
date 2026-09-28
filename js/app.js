@@ -1351,22 +1351,21 @@ function syncWidgetCounters() {
         return total;
     };
 
-    // ── WIDGET 1: Material Inbound (kolom Qty = index 5)
+    // ── WIDGET 1: Material Inbound (Qty = index 5)
     const c1 = document.getElementById('card-inbound-val');
     if (c1) c1.innerText = getTotalToday('inboundTableBody', 5);
 
-    // ── WIDGET 2: Material Outbound (kolom Qty = index 5)
+    // ── WIDGET 2: Material Outbound (Qty = index 5)
     const c2 = document.getElementById('card-outbound-val');
     if (c2) c2.innerText = getTotalToday('outboundTableBody', 5);
 
-    // ── WIDGET 3: FG Inbound (kolom Qty = index 4)
+    // ── WIDGET 3: FG Inbound (Qty = index 4)
     const c3 = document.getElementById('card-fg-inbound-val');
     if (c3) c3.innerText = getTotalToday('fgInboundTableBody', 4);
 
-    // ── WIDGET 4: FG Outbound (kolom Qty = index 4)
+    // ── WIDGET 4: FG Outbound (Qty = index 4)
     const c4 = document.getElementById('card-fg-outbound-val');
     if (c4) c4.innerText = getTotalToday('fgOutboundTableBody', 4);
-}
 
     // ── WIDGET 5: Antrean Picking (jumlah baris planning)
     const c5 = document.getElementById('card-picking-val');
@@ -1374,9 +1373,9 @@ function syncWidgetCounters() {
     if (c5 && planBody) c5.innerText = planBody.querySelectorAll('tr').length;
 
     // ── UPDATE SPARKLINE (grafis garis)
-    const totalInbound = parseFloat(document.getElementById('card-inbound-val')?.innerText) || 0;
-    const totalOutbound = parseFloat(document.getElementById('card-outbound-val')?.innerText) || 0;
-    const totalFgInbound = parseFloat(document.getElementById('card-fg-inbound-val')?.innerText) || 0;
+    const totalInbound    = parseFloat(document.getElementById('card-inbound-val')?.innerText) || 0;
+    const totalOutbound   = parseFloat(document.getElementById('card-outbound-val')?.innerText) || 0;
+    const totalFgInbound  = parseFloat(document.getElementById('card-fg-inbound-val')?.innerText) || 0;
     const totalFgOutbound = parseFloat(document.getElementById('card-fg-outbound-val')?.innerText) || 0;
 
     addHistoryPoint('inbound',    totalInbound,    'sparkline-inbound');

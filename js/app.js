@@ -872,46 +872,6 @@ function filterSummaryTable() {
 /* ==========================================================================
    8. MASTER DATA (MATERIAL, BOM, PLANNING)
    ========================================================================== */
-
-function submitMasterMaterial() {
-    const sap = document.getElementById('masterSapInput').value;
-    const name = document.getElementById('masterMaterialNameInput').value;
-    const group = document.getElementById('masterGroupInput').value;
-    const model = document.getElementById('masterModelInput').value;
-    const snp = document.getElementById('masterSnpInput').value || 1;
-
-    if (!sap || !name || !group || !model) {
-        showToast("Harap lengkapi semua kolom input!", "warning");
-        return;
-    }
-
-    const rowHTML = `
-        <tr class="hover:bg-slate-50 transition-colors">
-            <td class="p-3 font-medium text-slate-700">${model === 'ZQD' ? noZqd++ : noZqb++}</td>
-            <td class="p-3 font-semibold text-slate-800">${sap}</td>
-            <td class="p-3 text-slate-600">${name}</td>
-            <td class="p-3"><span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-medium">${group}</span></td>
-            <td class="p-3 text-center font-bold text-slate-700">${snp} pcs</td>
-            <td class="p-3 text-center">
-                <button onclick="this.closest('tr').remove()" class="text-rose-600 hover:text-rose-800 font-semibold text-xs">Hapus</button>
-            </td>
-        </tr>
-    `;
-
-    if (model === 'ZQD') {
-        document.getElementById('tableBodyMaterialZQD').insertAdjacentHTML('beforeend', rowHTML);
-    } else if (model === 'ZQB') {
-        document.getElementById('tableBodyMaterialZQB').insertAdjacentHTML('beforeend', rowHTML);
-    }
-
-    document.getElementById('masterSapInput').value = '';
-    document.getElementById('masterMaterialNameInput').value = '';
-    document.getElementById('masterGroupInput').value = '';
-    document.getElementById('masterModelInput').value = '';
-    document.getElementById('masterSnpInput').value = '';
-    showToast("Master Material berhasil ditambahkan!", "success");
-}
-
 function submitBomItem() {
     const model = document.getElementById('bomEngineModelInput').value;
     const sap = document.getElementById('bomSapInput').value;
@@ -1109,34 +1069,59 @@ function autofillMaterialInfo() {
  * Pastikan saat pendaftaran/simpan Master Material baru, 
  * datanya tersimpan ke window.masterMaterialList
  */
+/**
+ * Submit Master Material — versi final (gabungan)
+ * Simpan ke array + render ke tabel
+ */
 function submitMasterMaterial() {
     const sap = document.getElementById('masterSapInput').value.trim();
-    const nama = document.getElementById('masterMaterialNameInput').value.trim();
-    const grup = document.getElementById('masterGroupInput').value;
+    const name = document.getElementById('masterMaterialNameInput').value.trim();
+    const group = document.getElementById('masterGroupInput').value;
     const model = document.getElementById('masterModelInput').value;
-    const snp = document.getElementById('masterSnpInput').value;
+    const snp = document.getElementById('masterSnpInput').value || 1;
 
-    if (!sap || !nama || !grup || !model) {
-        alert('Mohon lengkapi semua field master material!');
+    if (!sap || !name || !group || !model) {
+        showToast("Harap lengkapi semua kolom input!", "warning");
         return;
     }
 
-    const newItem = { sap, namaMaterial: nama, grup, model, snp };
-    
-    // Simpan ke array Master Material
-    window.masterMaterialList.push(newItem);
+    // Simpan ke array (untuk autofill SAP di form Inbound)
+    window.masterMaterialList.push({
+        sap: sap,
+        namaMaterial: name,
+        grup: group,
+        model: model,
+        snp: snp
+    });
 
-    // Re-render tabel master (sesuaikan dengan fungsi render Anda)
-    renderMasterTables();
+    // Render ke tabel
+    const rowHTML = `
+        <tr class="hover:bg-slate-50 transition-colors">
+            <td class="p-3 font-medium text-slate-700">${model === 'ZQD' ? noZqd++ : noZqb++}</td>
+            <td class="p-3 font-semibold text-slate-800">${sap}</td>
+            <td class="p-3 text-slate-600">${name}</td>
+            <td class="p-3"><span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-medium">${group}</span></td>
+            <td class="p-3 text-center font-bold text-slate-700">${snp} pcs</td>
+            <td class="p-3 text-center">
+                <button onclick="this.closest('tr').remove()" class="text-rose-600 hover:text-rose-800 font-semibold text-xs">Hapus</button>
+            </td>
+        </tr>
+    `;
 
-    // Reset Form
+    if (model === 'ZQD') {
+        document.getElementById('tableBodyMaterialZQD')?.insertAdjacentHTML('beforeend', rowHTML);
+    } else if (model === 'ZQB') {
+        document.getElementById('tableBodyMaterialZQB')?.insertAdjacentHTML('beforeend', rowHTML);
+    }
+
+    // Reset form
     document.getElementById('masterSapInput').value = '';
     document.getElementById('masterMaterialNameInput').value = '';
     document.getElementById('masterGroupInput').value = '';
     document.getElementById('masterModelInput').value = '';
     document.getElementById('masterSnpInput').value = '';
 
-    alert('Master material berhasil ditambahkan!');
+    showToast("Master Material berhasil ditambahkan!", "success");
 }
 
 // ==========================================================

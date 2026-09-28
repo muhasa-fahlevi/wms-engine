@@ -1427,16 +1427,20 @@ function syncWidgetCounters() {
    11. STUB FUNCTION — Fitur Consumable & Refresh (belum diimplementasi penuh)
    ========================================================================== */
 
-function fetchInventoryData() {
-    // Cari ikon di dalam tombol yang diklik, atau tombol pertama yang match
-    const btn = event?.target?.closest('button') || document.querySelector('button[title="Refresh Data"]');
-    const icon = btn?.querySelector('i');
-    
+function fetchInventoryData(btn) {
+    // Ambil tombol — dari argumen, atau fallback ke pencarian by title
+    const targetBtn = btn || document.querySelector('button[title="Refresh Data"]');
+    const icon = targetBtn?.querySelector('i');
+
+    // Trigger animasi rotate
     if (icon) {
+        icon.classList.remove('spinning');  // reset dulu
+        void icon.offsetWidth;              // force reflow biar animation bisa re-trigger
         icon.classList.add('spinning');
         setTimeout(() => icon.classList.remove('spinning'), 600);
     }
-    
+
+    // Placeholder aksi
     showToast('Data ter-refresh', 'info');
 }
 

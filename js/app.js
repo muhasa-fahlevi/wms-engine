@@ -1427,9 +1427,17 @@ function syncWidgetCounters() {
    11. STUB FUNCTION — Fitur Consumable & Refresh (belum diimplementasi penuh)
    ========================================================================== */
 
-// Refresh data inventory (placeholder — nanti di-wire ke backend)
 function fetchInventoryData() {
-    showToast('Refresh data — belum ada backend', 'info');
+    // Cari ikon di dalam tombol yang diklik, atau tombol pertama yang match
+    const btn = event?.target?.closest('button') || document.querySelector('button[title="Refresh Data"]');
+    const icon = btn?.querySelector('i');
+    
+    if (icon) {
+        icon.classList.add('spinning');
+        setTimeout(() => icon.classList.remove('spinning'), 600);
+    }
+    
+    showToast('Data ter-refresh', 'info');
 }
 
 // Submit Inbound Consumable (placeholder)

@@ -375,7 +375,7 @@ function navTo(pageId, btn) {
 // ============================================
 const WIDGET_TABLE_CONFIG = {
     'Material Inbound': {
-        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode SAP', 'Nama Material', 'Batch', 'Qty'],
+        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode SAP', 'Nama Material', 'Batch', 'Qty', 'Lokasi Area'],
         sourceTbody: 'inboundTableBody'
     },
     'Material Outbound': {
@@ -781,7 +781,8 @@ function submitMaterialInbound() {
 
     const dt = getFormattedDateTime();
 
-    const inboundTable = document.getElementById('inboundTableBody') || document.getElementById('tableBodyRunningInbound');
+    // ─── 1. TABEL DI HALAMAN INBOUND SPAREPART (7 kolom) ───
+    const inboundTable = document.getElementById('inboundTableBody');
     if (inboundTable) {
         const row = inboundTable.insertRow(0);
         row.className = "hover:bg-slate-50";
@@ -796,7 +797,59 @@ function submitMaterialInbound() {
         `;
     }
 
-    // Simpan ke local inventory store untuk lookup outbound
+    // ─── 2. TABEL DI HALAMAN PENYIMPANAN (6 kolom, tanpa Lokasi) ───
+    const runningInbound = document.getElementById('tableBodyRunningInbound');
+    if (runningInbound) {
+        const row = runningInbound.insertRow(0);
+        row.className = "hover:bg-slate-50";
+        row.innerHTML = `
+            <td class="p-3">${dt}</td>
+            <td class="p-3 font-semibold text-slate-800">${pkgId}</td>
+            <td class="p-3 font-semibold">${sap}</td>
+            <td class="p-3">${name}</td>
+            <td class="p-3">${batch}</td>
+            <td class="p-3 font-bold text-emerald-600">${qty} Pcs</td>
+        `;
+    }
+
+    // ─── 3. RINGKASAN STOK (agregat per SAP) ───
+    const summaryTable = document.getElementById('tableBodySummary');
+    if (summaryTable) {
+        // Cari baris dengan SAP yang sama
+        let foundRow = null;
+        Array.from(summaryTable.getElementsByTagName('tr')).forEach(tr => {
+            const firstCell = tr.children[0];
+            if (firstCell && firstCell.innerText.trim() === String(sap)) {
+                foundRow = tr;
+            }
+        });
+
+        if (foundRow) {
+            // Update qty yang ada
+            const qtyCell = foundRow.children[3];
+            const currentQty = parseFloat((qtyCell.innerText || '0').replace(/[^\d.-]/g, '')) || 0;
+            qtyCell.innerText = currentQty + qty;
+        } else {
+            // Buat baris baru
+            const newRow = summaryTable.insertRow(0);
+            newRow.className = "hover:bg-slate-50";
+            newRow.innerHTML = `
+                <td class="p-3.5 font-semibold text-slate-800">${sap}</td>
+                <td class="p-3.5">${name}</td>
+                <td class="p-3.5">${bin}</td>
+                <td class="p-3.5 text-center font-bold text-slate-900">${qty}</td>
+                <td class="p-3.5 text-center"><span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">Ready</span></td>
+            `;
+        }
+
+        // Hapus placeholder "Memuat data stok..." kalau ada
+        const placeholder = summaryTable.querySelector('td[colspan]');
+        if (placeholder && summaryTable.getElementsByTagName('tr').length > 1) {
+            placeholder.parentElement.remove();
+        }
+    }
+
+    // ─── 4. SIMPAN KE LOCAL INVENTORY (untuk lookup outbound) ───
     window.inventoryStok.push({
         packageId: pkgId,
         sap: sap,
@@ -806,12 +859,13 @@ function submitMaterialInbound() {
         qty: qty
     });
 
-    if (document.getElementById('inboundPackageIdInput')) document.getElementById('inboundPackageIdInput').value = '';
-    if (document.getElementById('inboundSapInput')) document.getElementById('inboundSapInput').value = '';
-    if (document.getElementById('inboundMaterialNameInput')) document.getElementById('inboundMaterialNameInput').value = '';
-    if (document.getElementById('inboundBatchInput')) document.getElementById('inboundBatchInput').value = '';
-    document.getElementById('inboundSparepartQtyInput').value = '';
-    
+    // ─── 5. RESET FORM ───
+    ['inboundPackageIdInput', 'inboundSapInput', 'inboundMaterialNameInput', 
+     'inboundBatchInput', 'inboundSparepartQtyInput'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+
     showToast(`Material Inbound ${qty} Items (${sap}) berhasil disimpan!`, 'success');
 }
 

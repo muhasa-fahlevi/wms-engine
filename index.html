@@ -1,1403 +1,1498 @@
-/* ==========================================================================
-   1. GLOBAL STATE & DATA STORES
-   ========================================================================== */
-
-// Counter ID Transaksi Otomatis
-let transactionCounters = {
-    INB: 1,
-    OUB: 1,
-    FGI: 1,
-    FGO: 1,
-    PLE: 1
-};
-
-// Dashboard Running Totals
-let dashboardData = {
-    inboundMaterial: 0,
-    outboundMaterial: 0,
-    fgOutboundUnits: 0,
-    antreanPicking: 0
-};
-
-// History Data untuk Sparkline Graphs
-let historyData = {
-    inbound: [0, 0, 0, 0, 0, 0],
-    outbound: [0, 0, 0, 0, 0, 0],
-    fgInbound: [0, 0, 0, 0, 0, 0],
-    fgOutbound: [0, 0, 0, 0, 0, 0],
-    picking: [0, 0, 0, 0, 0, 0],
-    pallet: [0, 0, 0, 0, 0, 0]
-};
-
-// Data Stok Engine (Pcs)
-let engineStock = {
-    ZQD: { units: 0 },
-    ZQB: { units: 0 }
-};
-
-// Data Stok Pallet (Kosong, Terpakai, NG)
-let palletStock = {
-    ZQD: { kosong: 0, terpakai: 0, ng: 0 },
-    ZQB: { kosong: 0, terpakai: 0, ng: 0 }
-};
-
-// Tracking Pallet Aktif (Inbound FIFO)
-let activePalletState = {
-    ZQD: { lastDate: '', currentPalletQty: 0 },
-    ZQB: { lastDate: '', currentPalletQty: 0 }
-};
-
-// Master Material Counter & Local Inventory Store
-let noZqd = 1;
-let noZqb = 1;
-window.inventoryStok = window.inventoryStok || [];
-
-
-/* ==========================================================================
-   2. HELPER & UTILITY FUNCTIONS
-   ========================================================================== */
-
-// Generator ID Transaksi Otomatis (contoh: INB-001)
-function generateTransactionID(prefix) {
-    const count = transactionCounters[prefix] || 1;
-    const formatted = String(count).padStart(3, '0');
-    transactionCounters[prefix] = count + 1;
-    return `${prefix}-${formatted}`;
-}
-
-// Format Tanggal (DD-MM-YY, HH:mm)
-function getFormattedDateTime() {
-    const now = new Date();
-    const dd = String(now.getDate()).padStart(2, '0');
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const yy = String(now.getFullYear()).slice(-2);
-    const hh = String(now.getHours()).padStart(2, '0');
-    const min = String(now.getMinutes()).padStart(2, '0');
-    return `${dd}-${mm}-${yy}, ${hh}:${min}`;
-}
-
-// Tanggal Sistem Simulasi (YYYY-MM-DD)
-function getTodayDateString() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-}
-
-// Kalkulasi Kebutuhan Pallet Inbound (FIFO & Lock Beda Hari)
-function getInboundPalletRequirement(model, pcsInput) {
-    const today = getTodayDateString();
-    const state = activePalletState[model] || { lastDate: '', currentPalletQty: 0 };
-    
-    const effectiveActiveQty = (state.lastDate === today) ? state.currentPalletQty : 0;
-    const spaceAvailable = effectiveActiveQty > 0 ? (4 - effectiveActiveQty) : 0;
-    
-    let palletsNeeded = 0;
-    let newActiveQty = 0;
-    
-    if (pcsInput <= spaceAvailable) {
-        palletsNeeded = 0;
-        newActiveQty = effectiveActiveQty + pcsInput;
-    } else {
-        const remainingPcs = pcsInput - spaceAvailable;
-        palletsNeeded = Math.ceil(remainingPcs / 4);
-        const remainder = remainingPcs % 4;
-        newActiveQty = remainder === 0 ? 4 : remainder;
-    }
-
-    return { palletsNeeded, newActiveQty };
-}
-
-// Toast Notification System (Single Source of Truth)
-function showToast(message, type = 'success') {
-    const container = document.getElementById('toastContainer');
-    if (!container) {
-        console.log(`[TOAST - ${type.toUpperCase()}]: ${message}`);
-        return;
-    }
-
-    const toast = document.createElement('div');
-    
-    let bgColor = 'bg-slate-800 text-white';
-    let icon = 'ri-checkbox-circle-fill text-emerald-400';
-    
-    if (type === 'error') {
-        bgColor = 'bg-rose-600 text-white';
-        icon = 'ri-error-warning-fill text-white';
-    } else if (type === 'warning') {
-        bgColor = 'bg-amber-500 text-white';
-        icon = 'ri-alert-fill text-white';
-    } else if (type === 'info') {
-        bgColor = 'bg-blue-600 text-white';
-        icon = 'ri-information-fill text-white';
-    }
-
-    toast.className = `${bgColor} text-xs font-medium px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 pointer-events-auto transform transition-all duration-300 translate-y-2 opacity-0`;
-    toast.innerHTML = `<i class="${icon} text-lg"></i> <span>${message}</span>`;
-
-    container.appendChild(toast);
-
-    setTimeout(() => {
-        toast.classList.remove('translate-y-2', 'opacity-0');
-    }, 10);
-
-    setTimeout(() => {
-        toast.classList.add('opacity-0', 'translate-y-2');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
-
-/* ==========================================================================
-   3. BARCODE PARSER & SCANNER SYSTEM
-   ========================================================================== */
-
-/**
- * Memecah string barcode terstruktur (berpemisah ';') ke dalam objek JSON
- * Contoh: P:FZ70;V:100875;M:14313141-00/PCS;B:260803348Q;S:126080300353115;Q:24/6/51
- */
-function parseWmsBarcode(rawText) {
-    const result = {
-        plant: '',       // P
-        vendor: '',      // V
-        sapCode: '',     // M (bersih dari /PCS)
-        rawMaterial: '', // M
-        batch: '',       // B
-        lot: '',         // Lot
-        packageId: '',   // S
-        poNumber: '',    // PO
-        qty: 0,          // Q (diambil angka pertama)
-        date: '',        // D
-        sn: '',          // SN
-        expiredDate: '', // YX
-        dnNumber: ''     // DN
-    };
-
-    if (!rawText || typeof rawText !== 'string') return result;
-
-    const items = rawText.split(';');
-
-    items.forEach(item => {
-        const colonIdx = item.indexOf(':');
-        if (colonIdx !== -1) {
-            const key = item.substring(0, colonIdx).trim();
-            const value = item.substring(colonIdx + 1).trim();
-
-            result[key] = value; 
-
-            switch (key) {
-                case 'P': result.plant = value; break;
-                case 'V': result.vendor = value; break;
-                case 'M': 
-                    result.rawMaterial = value;
-                    result.sapCode = value.split('/')[0].trim(); 
-                    break;
-                case 'B': result.batch = value; break;
-                case 'Lot': result.lot = value; break;
-                case 'S': result.packageId = value; break;
-                case 'PO': result.poNumber = value; break;
-                case 'Q': 
-                    const firstQty = value.split('/')[0];
-                    result.qty = parseFloat(firstQty) || 0;
-                    break;
-                case 'D': result.date = value; break;
-                case 'SN': result.sn = value; break;
-                case 'YX': result.expiredDate = value; break;
-                case 'DN': result.dnNumber = value; break;
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS Engine - Dashboard Management</title>
+    <!-- Google Fonts Poppins -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Remix Icon CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Poppins', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                        }
+                    }
+                }
             }
         }
-    });
+    </script>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased h-screen flex flex-col overflow-hidden" style="height: 100dvh;">
 
-    return result;
-}
+    <!-- TOAST NOTIFICATION CONTAINER -->
+    <div id="toastContainer" class="fixed top-20 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
-// Eksekusi Scan Inbound
-function processScanInbound(scannedValue) {
-    if (!scannedValue) return;
+    <!-- HEADER PATEN -->
+    <header class="h-16 bg-white border-b border-slate-200 px-4 md:px-6 flex items-center justify-between z-30 flex-shrink-0 shadow-sm">
+        <div class="flex items-center gap-3">
+            <button id="sidebarToggle" onclick="toggleSidebar()" class="p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-center">
+                <i class="ri-menu-fold-line text-2xl" id="toggleIcon"></i>
+            </button>
+            <div class="flex items-center gap-3">
+    <img src="assets/byd-logo.svg" alt="BYD" class="h-8 w-auto">
+    <h1 class="text-xl font-bold tracking-tight text-slate-900">WMS Engine</h1>
+</div>
+        </div>
 
-    if (!scannedValue.includes(':')) {
-        return; // Jika QR code sederhana / bukan QR WMS terstruktur
-    }
+        <div class="flex items-center gap-4">
+            <div class="hidden sm:flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-200">
+                <i class="ri-time-line text-blue-600"></i>
+                <span id="liveClock">--:--:--</span>
+            </div>
+            <div class="flex items-center gap-3 pl-3 border-l border-slate-200">
+                <div class="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-slate-600">
+                    <i class="ri-user-3-line text-lg"></i>
+                </div>
+                <div class="hidden md:block text-xs">
+                    <p class="font-semibold text-slate-800">Muhasa Fahlevi</p>
+                    <p class="text-slate-500">Administrator</p>
+                </div>
+            </div>
+        </div>
+    </header>
 
-    const data = parseWmsBarcode(scannedValue);
+    <div class="flex flex-1 overflow-hidden relative min-h-0">
 
-    // 1. Set Package ID (Key 'S')
-    if (data.packageId || data['S']) {
-        const el = document.getElementById('inboundPackageIdInput');
-        if (el) el.value = data.packageId || data['S'];
-    }
+        <!-- OVERLAY MOBILE -->
+        <div id="sidebarOverlay" onclick="toggleSidebar()" class="fixed inset-0 bg-slate-900/40 z-20 hidden md:hidden backdrop-blur-sm transition-opacity"></div>
 
-    // 2. Set Kode SAP (Key 'M')
-    if (data.sapCode) {
-        const el = document.getElementById('inboundSapInput');
-        if (el) el.value = data.sapCode;
-        fetchMaterialNameBySap(data.sapCode);
-    }
-
-    // 3. Set Batch (Key 'B')
-    if (data.batch || data['B']) {
-        const el = document.getElementById('inboundBatchInput');
-        if (el) el.value = data.batch || data['B'];
-    }
-
-    // 4. Set Quantity (Key 'Q')
-    if (data.qty) {
-        const el = document.getElementById('inboundSparepartQtyInput');
-        if (el) el.value = data.qty;
-    }
-
-    // 5. Pindahkan kursor otomatis ke Bin Location
-    const binInput = document.getElementById('inboundBinInput');
-    if (binInput) binInput.focus();
-
-    showToast('Barcode Inbound berhasil diproses!', 'success');
-}
-
-// Eksekusi Scan Outbound
-function processScanOutbound(scannedValue) {
-    if (!scannedValue) return;
-
-    const data = parseWmsBarcode(scannedValue);
-    const packageId = data.packageId || data['S'] || scannedValue.trim();
-
-    const el = document.getElementById('outboundPackageIdInput');
-    if (el) el.value = packageId;
-
-    lookupStokByPackageId(packageId);
-}
-
-// Google Apps Script Backend Fetch Material Name
-function fetchMaterialNameBySap(sapCode) {
-    const nameInput = document.getElementById('inboundMaterialNameInput');
-    if (!nameInput) return;
-
-    nameInput.value = 'Mencari...';
-
-    if (typeof google !== 'undefined' && google.script && google.script.run) {
-        google.script.run
-            .withSuccessHandler((materialName) => {
-                nameInput.value = materialName || 'Material Tidak Ditemukan';
-            })
-            .getMaterialNameBySap(sapCode);
-    } else {
-        nameInput.value = 'Demo Material ' + sapCode;
-    }
-}
-
-// Search stok saat Outbound Scan
-function lookupStokByPackageId(packageId) {
-    const itemInStok = window.inventoryStok.find(i => i.packageId === packageId);
-
-    if (itemInStok) {
-        if (document.getElementById('outboundSapInput')) document.getElementById('outboundSapInput').value = itemInStok.sap;
-        if (document.getElementById('outboundMaterialNameInput')) document.getElementById('outboundMaterialNameInput').value = itemInStok.name;
-        if (document.getElementById('outboundBatchInput')) document.getElementById('outboundBatchInput').value = itemInStok.batch;
-        if (document.getElementById('outboundLocationInput')) document.getElementById('outboundLocationInput').value = itemInStok.location;
-        if (document.getElementById('outboundSparepartQtyInput')) document.getElementById('outboundSparepartQtyInput').value = itemInStok.qty;
+        <!-- SIDEBAR -->
+        <aside id="sidebar" class="w-64 bg-white border-r border-slate-200 flex flex-col flex-shrink-0 absolute md:relative z-30 h-full transition-all duration-300 transform -translate-x-full md:translate-x-0">
+        <div class="p-4 flex-1 overflow-y-auto space-y-1">
         
-        showToast('Data paket ditemukan di stok!', 'info');
-    } else {
-        showToast('Package ID ' + packageId + ' tidak ditemukan di stok!', 'error');
-    }
-}
-
-
-/* ==========================================================================
-   4. UI NAVIGATION, CLOCK, & SPARKLINE
-   ========================================================================== */
-
-function updateClock() {
-    const now = new Date();
-    const timeString = now.toLocaleTimeString('id-ID');
-    const clockEl = document.getElementById('liveClock');
-    if (clockEl) clockEl.innerText = timeString;
-}
-
-function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('sidebarOverlay');
-    const toggleIcon = document.getElementById('toggleIcon');
-    
-    if (!sidebar) return;
-    sidebar.classList.toggle('-translate-x-full');
-    if (overlay) overlay.classList.toggle('hidden');
-    
-    if (toggleIcon) {
-        if (sidebar.classList.contains('-translate-x-full')) {
-            toggleIcon.className = 'ri-menu-unfold-line text-2xl';
-        } else {
-            toggleIcon.className = 'ri-menu-fold-line text-2xl';
-        }
-    }
-}
-
-function closeAllDropdowns() {
-    document.querySelectorAll('.submenu-content').forEach(menu => menu.classList.remove('open'));
-    document.querySelectorAll('[id^="arrow-"]').forEach(arrow => arrow.classList.remove('rotate-180'));
-}
-
-function toggleDropdown(menuId, arrowId) {
-    const targetMenu = document.getElementById(menuId);
-    const targetArrow = document.getElementById(arrowId);
-    const isOpen = targetMenu ? targetMenu.classList.contains('open') : false;
-
-    closeAllDropdowns();
-
-    if (!isOpen) {
-        if (targetMenu) targetMenu.classList.add('open');
-        if (targetArrow) targetArrow.classList.add('rotate-180');
-    }
-}
-
-function navTo(pageId, btn) {
-    document.querySelectorAll('.page-content').forEach(page => page.classList.add('hidden'));
-    
-    const targetPage = document.getElementById(pageId);
-    if (targetPage) targetPage.classList.remove('hidden');
-
-    if (btn) {
-        document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active-tab'));
-        btn.classList.add('active-tab');
-    }
-
-    if (window.innerWidth < 768) {
-        const sidebar = document.getElementById('sidebar');
-        if (sidebar && !sidebar.classList.contains('-translate-x-full')) {
-            toggleSidebar();
-        }
-    }
-}
-
-// ============================================
-// KONFIGURASI TABEL PER WIDGET
-// Setiap widget punya header & sumber tabel sendiri
-// ============================================
-const WIDGET_TABLE_CONFIG = {
-    'Material Inbound': {
-        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode SAP', 'Nama Material', 'Batch', 'Qty'],
-        sourceTbody: 'inboundTableBody'
-    },
-    'Material Outbound': {
-        headers: ['Tanggal & Jam', 'Package ID (S)', 'Kode SAP', 'Nama Material', 'Batch', 'Qty Out'],
-        sourceTbody: 'outboundTableBody'
-    },
-    'FG Inbound': {
-        headers: ['Tanggal', 'ID Transaksi', 'Engine ID', 'Pallet ID', 'Qty', 'Pallet Terpakai'],
-        sourceTbody: 'fgInboundTableBody'
-    },
-    'FG Outbound': {
-        headers: ['Tanggal', 'ID Transaksi', 'Engine ID', 'Pallet ID', 'Qty', 'Pallet Kosong'],
-        sourceTbody: 'fgOutboundTableBody'
-    },
-    'Antrean Picking': {
-        headers: ['ID Order', 'Prioritas', 'Item', 'Lokasi Target', 'Status'],
-        sourceTbody: null // belum ada sumber, tampilkan placeholder
-    },
-    'Kapasitas Pallet Engine': {
-        headers: ['Tanggal', 'ID Transaksi', 'Pallet ID', 'Qty', 'Catatan', 'Status'],
-        sourceTbody: 'palletRunningTableBody'
-    }
-};
-
-function openWidgetRunning(title) {
-    // Ambil config widget, atau fallback ke header generic
-    const config = WIDGET_TABLE_CONFIG[title] || {
-        headers: ['Tanggal', 'ID Transaksi', 'ID/Kode Item', 'Nama Description', 'Lokasi', 'Qty', 'Status Running'],
-        sourceTbody: null
-    };
-
-    // 1. Set judul halaman
-    const el = document.getElementById('widget-table-title');
-    if (el) el.innerText = `Running Table - ${title}`;
-
-    // 2. Render header kolom (dinamis)
-    const thead = document.getElementById('widget-table-head');
-    if (thead) {
-        thead.innerHTML = '<tr>' + config.headers.map(h =>
-            `<th class="p-3.5 font-semibold whitespace-nowrap">${h}</th>`
-        ).join('') + '</tr>';
-    }
-
-    // 3. Clone data dari tabel sumber (kalau ada)
-    const tbody = document.getElementById('widget-table-body');
-    if (tbody) {
-        const sourceTbody = config.sourceTbody ? document.getElementById(config.sourceTbody) : null;
-
-        if (sourceTbody && sourceTbody.children.length > 0) {
-            // Copy semua baris dari tbody sumber
-            tbody.innerHTML = sourceTbody.innerHTML;
-        } else {
-            // Placeholder kalau belum ada data
-            tbody.innerHTML = `<tr><td colspan="${config.headers.length}" class="p-6 text-center text-slate-400">Belum ada data untuk kategori ini.</td></tr>`;
-        }
-    }
-
-    // 4. Navigate
-    navTo('page-widget-table');
-}
-
-function switchRakTab(type) {
-    const tabInput = document.getElementById('tab-rak-input');
-    const tabOutput = document.getElementById('tab-rak-output');
-    const btnInput = document.getElementById('btn-tab-rak-input');
-    const btnOutput = document.getElementById('btn-tab-rak-output');
-
-    if (type === 'input') {
-        if (tabInput) tabInput.classList.remove('hidden');
-        if (tabOutput) tabOutput.classList.add('hidden');
-        if (btnInput) btnInput.className = "pb-2 text-sm font-semibold border-b-2 border-blue-600 text-blue-600 transition-all flex items-center gap-2";
-        if (btnOutput) btnOutput.className = "pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition-all flex items-center gap-2";
-    } else {
-        if (tabInput) tabInput.classList.add('hidden');
-        if (tabOutput) tabOutput.classList.remove('hidden');
-        if (btnOutput) btnOutput.className = "pb-2 text-sm font-semibold border-b-2 border-rose-600 text-rose-600 transition-all flex items-center gap-2";
-        if (btnInput) btnInput.className = "pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition-all flex items-center gap-2";
-    }
-}
-
-function updateSparklinePath(svgId, dataArray) {
-    const svgPath = document.getElementById(svgId);
-    if (!svgPath) return;
-    
-    const max = Math.max(...dataArray, 10);
-    const points = dataArray.map((val, idx) => {
-        const x = idx * 20;
-        const y = 28 - ((val / max) * 22);
-        return `${x},${y.toFixed(1)}`;
-    });
-    
-    svgPath.setAttribute('d', `M${points.join(' L')}`);
-}
-
-function addHistoryPoint(key, value, svgId) {
-    if (!historyData[key]) return;
-    historyData[key].push(value);
-    if (historyData[key].length > 6) {
-        historyData[key].shift();
-    }
-    updateSparklinePath(svgId, historyData[key]);
-}
-
-
-/* ==========================================================================
-   5. FINISHGOODS (FG) TRANSACTIONS LOGIC
-   ========================================================================== */
-
-function syncFgModel() {
-    const engineModel = document.getElementById('fgModelEngine').value;
-    document.getElementById('fgModelPallet').value = engineModel;
-    calculateFgQty();
-}
-
-function calculateFgQty() {
-    const pcsInput = parseInt(document.getElementById('fgEngineQtyPcs').value) || 0;
-    const palletModel = document.getElementById('fgModelPallet').value;
-    const display = document.getElementById('fgTotalQtyDisplay');
-
-    if (pcsInput <= 0) {
-        if (display) display.innerText = '-';
-        return;
-    }
-
-    const { palletsNeeded } = getInboundPalletRequirement(palletModel, pcsInput);
-    if (display) display.innerText = `${palletsNeeded} Pallet`;
-}
-
-function syncFgOutModel() {
-    const engineModel = document.getElementById('fgOutModelEngine').value;
-    document.getElementById('fgOutModelPallet').value = engineModel;
-    calculateFgOutQty();
-}
-
-function calculateFgOutQty() {
-    const pcsInput = parseInt(document.getElementById('fgOutEngineQtyPcs').value) || 0;
-    const display = document.getElementById('fgOutTotalQtyDisplay');
-
-    if (pcsInput <= 0) {
-        if (display) display.innerText = '-';
-        return;
-    }
-
-    const palletsFreed = Math.ceil(pcsInput / 4);
-    if (display) display.innerText = `${palletsFreed} Pallet`;
-}
-
-function submitFgInbound() {
-    const engineModel = document.getElementById('fgModelEngine').value;
-    const palletModel = document.getElementById('fgModelPallet').value;
-    const pcsInput = parseInt(document.getElementById('fgEngineQtyPcs').value) || 0;
-
-    if (pcsInput <= 0) {
-        showToast('Masukkan jumlah Pcs yang valid!', 'warning');
-        return;
-    }
-
-    const { palletsNeeded, newActiveQty } = getInboundPalletRequirement(palletModel, pcsInput);
-
-    if (palletStock[palletModel].kosong < palletsNeeded) {
-        showToast(`Stok pallet kosong (${palletModel}) tidak mencukupi! Diperlukan: ${palletsNeeded}`, 'error');
-        return;
-    }
-
-    engineStock[engineModel].units += pcsInput;
-    palletStock[palletModel].kosong -= palletsNeeded;
-    palletStock[palletModel].terpakai += palletsNeeded;
-
-    activePalletState[palletModel].lastDate = getTodayDateString();
-    activePalletState[palletModel].currentPalletQty = newActiveQty;
-
-    const txId = generateTransactionID('FGI');
-    const dt = getFormattedDateTime();
-
-    const fgTable = document.getElementById('fgInboundTableBody');
-    if (fgTable) {
-        const row = fgTable.insertRow(0);
-        row.className = "hover:bg-slate-50";
-        row.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-black-600">${txId}</td>
-            <td class="p-3.5 font-semibold">${engineModel}</td>
-            <td class="p-3.5 font-semibold">${palletModel}</td>
-            <td class="p-3.5 font-semibold">${pcsInput} Pcs</td>
-            <td class="p-3.5">${palletsNeeded} Pallet</td>
-        `;
-    }
-
-    const engineTable = document.getElementById('engineRunningTableBody');
-    if (engineTable) {
-        const erow = engineTable.insertRow(0);
-        erow.className = "hover:bg-slate-50";
-        erow.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-black-600">${txId}</td>
-            <td class="p-3.5 font-semibold">${engineModel}</td>
-            <td class="p-3.5 font-semibold">${palletModel}</td>
-            <td class="p-3.5 font-semibold text-black-600">${pcsInput} Pcs</td>
-            <td class="p-3.5"><span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">Inbound</span></td>
-        `;
-    }
-
-    const palletTable = document.getElementById('palletRunningTableBody');
-    if (palletTable) {
-        const prow = palletTable.insertRow(0);
-        prow.className = "hover:bg-slate-50";
-        prow.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-black-600">${txId}</td>
-            <td class="p-3.5 font-semibold">${palletModel}</td>
-            <td class="p-3.5 font-semibold text-black-600">${palletsNeeded} Pallet</td>
-            <td class="p-3.5">Pallet Terpakai</td>
-            <td class="p-3.5"><span class="px-2 py-0.5 bg-orange-50 text-orange-600 rounded font-medium">FG Inbound</span></td>
-        `;
-    }
-
-    updateEngineStockUI();
-    updatePalletUI();
-    document.getElementById('fgEngineQtyPcs').value = '';
-    document.getElementById('fgTotalQtyDisplay').innerText = '-';
-    showToast(`Inbound FG ${pcsInput} Pcs (${palletsNeeded} Pallet) Berhasil! ID: ${txId}`, 'success');
-}
-
-function submitFgOutbound() {
-    const engineModel = document.getElementById('fgOutModelEngine').value;
-    const palletModel = document.getElementById('fgOutModelPallet').value;
-    const pcsInput = parseInt(document.getElementById('fgOutEngineQtyPcs').value) || 0;
-
-    if (pcsInput <= 0) {
-        showToast('Masukkan jumlah Pcs yang valid!', 'warning');
-        return;
-    }
-
-    if (engineStock[engineModel].units < pcsInput) {
-        showToast(`Stok Engine ${engineModel} tidak mencukupi! Stok saat ini: ${engineStock[engineModel].units} Pcs`, 'error');
-        return;
-    }
-
-    const palletsFreed = Math.ceil(pcsInput / 4);
-
-    engineStock[engineModel].units -= pcsInput;
-    palletStock[palletModel].terpakai = Math.max(0, palletStock[palletModel].terpakai - palletsFreed);
-    palletStock[palletModel].kosong += palletsFreed;
-
-    const txId = generateTransactionID('FGO');
-    const dt = getFormattedDateTime();
-
-    const fgOutTable = document.getElementById('fgOutboundTableBody');
-    if (fgOutTable) {
-        const row = fgOutTable.insertRow(0);
-        row.className = "hover:bg-slate-50";
-        row.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-black-600">${txId}</td>
-            <td class="p-3.5 font-semibold">${engineModel}</td>
-            <td class="p-3.5 font-semibold">${palletModel}</td>
-            <td class="p-3.5 font-semibold">${pcsInput} Pcs</td>
-            <td class="p-3.5">${palletsFreed} Pallet</td>
-        `;
-    }
-
-    const engineTable = document.getElementById('engineRunningTableBody');
-    if (engineTable) {
-        const erow = engineTable.insertRow(0);
-        erow.className = "hover:bg-slate-50";
-        erow.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-black-600">${txId}</td>
-            <td class="p-3.5 font-semibold">${engineModel}</td>
-            <td class="p-3.5 font-semibold">${palletModel}</td>
-            <td class="p-3.5 font-semibold text-black-600">${pcsInput} Pcs</td>
-            <td class="p-3.5"><span class="px-2 py-0.5 bg-red-50 text-red-600 rounded font-medium">Outbound</span></td>
-        `;
-    }
-
-    const palletTable = document.getElementById('palletRunningTableBody');
-    if (palletTable) {
-        const prow = palletTable.insertRow(0);
-        prow.className = "hover:bg-slate-50";
-        prow.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-black-600">${txId}</td>
-            <td class="p-3.5 font-semibold">${palletModel}</td>
-            <td class="p-3.5 font-semibold text-black-600">${palletsFreed} Pallet</td>
-            <td class="p-3.5">Pallet Kosong</td>
-            <td class="p-3.5"><span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">FG Outbound</span></td>
-        `;
-    }
-
-    updateEngineStockUI();
-    updatePalletUI();
-    document.getElementById('fgOutEngineQtyPcs').value = '';
-    document.getElementById('fgOutTotalQtyDisplay').innerText = '-';
-    showToast(`Outbound FG ${pcsInput} Pcs (${palletsFreed} Pallet Kosong) Berhasil! ID: ${txId}`, 'success');
-}
-
-
-/* ==========================================================================
-   6. PALLET MANAGEMENT TRANSACTIONS LOGIC
-   ========================================================================== */
-
-function submitPalletInput() {
-    const palletId = document.getElementById('palletInputId').value;
-    const qty = parseInt(document.getElementById('palletInputQty').value) || 0;
-    const catatan = document.getElementById('palletInputCatatan').value || 'Penerimaan Pallet';
-
-    if (qty <= 0) {
-        showToast('Masukkan jumlah pallet yang valid!', 'warning');
-        return;
-    }
-
-    palletStock[palletId].kosong += qty;
-
-    const txId = generateTransactionID('PLE');
-    const dt = getFormattedDateTime();
-
-    const palletTable = document.getElementById('palletRunningTableBody');
-    if (palletTable) {
-        const prow = palletTable.insertRow(0);
-        prow.className = "hover:bg-slate-50";
-        prow.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-black-600">${txId}</td>
-            <td class="p-3.5 font-semibold">${palletId}</td>
-            <td class="p-3.5 font-semibold text-black-600">${qty} Pallet</td>
-            <td class="p-3.5">${catatan}</td>
-            <td class="p-3.5"><span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">Received</span></td>
-        `;
-    }
-
-    updatePalletUI();
-    document.getElementById('palletInputQty').value = '';
-    document.getElementById('palletInputCatatan').value = '';
-    showToast(`Berhasil menambah ${qty} Pallet Kosong (${palletId})! ID: ${txId}`, 'success');
-}
-
-function submitPalletOutput() {
-    const palletId = document.getElementById('palletOutputId').value;
-    const type = document.getElementById('palletOutputType').value;
-    const qty = parseInt(document.getElementById('palletOutputQty').value) || 0;
-    const catatan = document.getElementById('palletOutputCatatan').value || `Pallet ${type}`;
-
-    if (qty <= 0) {
-        showToast('Masukkan jumlah pallet yang valid!', 'warning');
-        return;
-    }
-
-    if (type === 'NG') {
-        if (palletStock[palletId].kosong < qty) {
-            showToast(`Stok Pallet Kosong ${palletId} tidak mencukupi untuk di-NG-kan!`, 'error');
-            return;
-        }
-        palletStock[palletId].kosong -= qty;
-        palletStock[palletId].ng += qty;
-    } else {
-        if (palletStock[palletId].kosong < qty) {
-            showToast(`Stok Pallet Kosong ${palletId} tidak mencukupi!`, 'error');
-            return;
-        }
-        palletStock[palletId].kosong -= qty;
-    }
-
-    const txId = generateTransactionID('PLE');
-    const dt = getFormattedDateTime();
-
-    const palletTable = document.getElementById('palletRunningTableBody');
-    if (palletTable) {
-        const prow = palletTable.insertRow(0);
-        prow.className = "hover:bg-slate-50";
-        prow.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-black-600">${txId}</td>
-            <td class="p-3.5 font-semibold">${palletId}</td>
-            <td class="p-3.5 font-semibold text-black-600">${qty} Pallet</td>
-            <td class="p-3.5">${catatan}</td>
-            <td class="p-3.5"><span class="px-2 py-0.5 bg-red-50 text-red-600 rounded font-medium">(${type})</span></td>
-        `;
-    }
-
-    updatePalletUI();
-    document.getElementById('palletOutputQty').value = '';
-    document.getElementById('palletOutputCatatan').value = '';
-    showToast(`Output Pallet ${type} (${palletId}) sejumlah ${qty} Berhasil! ID: ${txId}`, 'success');
-}
-
-
-/* ==========================================================================
-   7. MATERIAL & CONSUMABLE TRANSACTIONS LOGIC
-   ========================================================================== */
-
-function submitMaterialInbound() {
-    const pkgId = document.getElementById('inboundPackageIdInput')?.value || generateTransactionID('INB');
-    const sap = document.getElementById('inboundSapInput')?.value || '-';
-    const name = document.getElementById('inboundMaterialNameInput')?.value || '-';
-    const batch = document.getElementById('inboundBatchInput')?.value || '-';
-    const qty = parseInt(document.getElementById('inboundSparepartQtyInput').value) || 0;
-    const bin = document.getElementById('inboundBinInput')?.value || '-';
-
-    if (qty <= 0) {
-        showToast('Masukkan jumlah Qty yang valid!', 'warning');
-        return;
-    }
-
-    const dt = getFormattedDateTime();
-
-    const inboundTable = document.getElementById('inboundTableBody') || document.getElementById('tableBodyRunningInbound');
-    if (inboundTable) {
-        const row = inboundTable.insertRow(0);
-        row.className = "hover:bg-slate-50";
-        row.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-slate-800">${pkgId}</td>
-            <td class="p-3.5 font-semibold">${sap}</td>
-            <td class="p-3.5">${name}</td>
-            <td class="p-3.5">${batch}</td>
-            <td class="p-3.5 font-bold text-emerald-600">${qty} Pcs</td>
-            <td class="p-3.5"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs">${bin}</span></td>
-        `;
-    }
-
-    // Simpan ke local inventory store untuk lookup outbound
-    window.inventoryStok.push({
-        packageId: pkgId,
-        sap: sap,
-        name: name,
-        batch: batch,
-        location: bin,
-        qty: qty
-    });
-
-    if (document.getElementById('inboundPackageIdInput')) document.getElementById('inboundPackageIdInput').value = '';
-    if (document.getElementById('inboundSapInput')) document.getElementById('inboundSapInput').value = '';
-    if (document.getElementById('inboundMaterialNameInput')) document.getElementById('inboundMaterialNameInput').value = '';
-    if (document.getElementById('inboundBatchInput')) document.getElementById('inboundBatchInput').value = '';
-    document.getElementById('inboundSparepartQtyInput').value = '';
-    
-    showToast(`Material Inbound ${qty} Items (${sap}) berhasil disimpan!`, 'success');
-}
-
-function submitMaterialOutbound() {
-    const pkgId = document.getElementById('outboundPackageIdInput')?.value || generateTransactionID('OUB');
-    const sap = document.getElementById('outboundSapInput')?.value || '-';
-    const name = document.getElementById('outboundMaterialNameInput')?.value || '-';
-    const batch = document.getElementById('outboundBatchInput')?.value || '-';
-    const loc = document.getElementById('outboundLocationInput')?.value || '-';
-    const qty = parseInt(document.getElementById('outboundSparepartQtyInput').value) || 0;
-
-    if (qty <= 0) {
-        showToast('Masukkan jumlah Qty yang valid!', 'warning');
-        return;
-    }
-
-    const dt = getFormattedDateTime();
-
-    const outboundTable = document.getElementById('outboundTableBody') || document.getElementById('tableBodyRunningOutbound');
-    if (outboundTable) {
-        const row = outboundTable.insertRow(0);
-        row.className = "hover:bg-slate-50";
-        row.innerHTML = `
-            <td class="p-3.5">${dt}</td>
-            <td class="p-3.5 font-semibold text-slate-800">${pkgId}</td>
-            <td class="p-3.5 font-semibold">${sap}</td>
-            <td class="p-3.5">${name}</td>
-            <td class="p-3.5">${batch}</td>
-            <td class="p-3.5">${loc}</td>
-            <td class="p-3.5 font-bold text-rose-600">${qty} Pcs</td>
-        `;
-    }
-
-    if (document.getElementById('outboundPackageIdInput')) document.getElementById('outboundPackageIdInput').value = '';
-    if (document.getElementById('outboundSapInput')) document.getElementById('outboundSapInput').value = '';
-    if (document.getElementById('outboundMaterialNameInput')) document.getElementById('outboundMaterialNameInput').value = '';
-    if (document.getElementById('outboundBatchInput')) document.getElementById('outboundBatchInput').value = '';
-    document.getElementById('outboundSparepartQtyInput').value = '';
-
-    showToast(`Material Outbound ${qty} Items (${sap}) berhasil diproses!`, 'success');
-}
-
-function filterSummaryTable() {
-    const input = document.getElementById('searchSummaryInput');
-    if (!input) return;
-    const filter = input.value.toLowerCase();
-    const tbody = document.getElementById('tableBodySummary');
-    if (!tbody) return;
-
-    const rows = tbody.getElementsByTagName('tr');
-    for (let i = 0; i < rows.length; i++) {
-        const text = rows[i].innerText.toLowerCase();
-        rows[i].style.display = text.includes(filter) ? '' : 'none';
-    }
-}
-
-
-/* ==========================================================================
-   8. MASTER DATA (MATERIAL, BOM, PLANNING)
-   ========================================================================== */
-function submitBomItem() {
-    const model = document.getElementById('bomEngineModelInput').value;
-    const sap = document.getElementById('bomSapInput').value;
-    const name = document.getElementById('bomMaterialNameInput').value || "Piston Rod Std";
-    const qty = document.getElementById('bomQtyInput').value;
-
-    if (!model || !sap || !qty) {
-        showToast("Harap lengkapi Model Engine, SAP, dan Qty!", "warning");
-        return;
-    }
-
-    const rowHTML = `
-        <tr class="hover:bg-slate-50 transition-colors">
-            <td class="p-3 font-semibold text-slate-800">${sap}</td>
-            <td class="p-3 text-slate-600">${name}</td>
-            <td class="p-3 text-center font-bold text-blue-600">${qty} pcs</td>
-            <td class="p-3 text-center">
-                <button onclick="this.closest('tr').remove()" class="text-rose-600 hover:text-rose-800 font-semibold text-xs">Hapus</button>
-            </td>
-        </tr>
-    `;
-
-    if (model === 'ZQD') {
-        document.getElementById('tableBodyBomZQD').insertAdjacentHTML('beforeend', rowHTML);
-    } else if (model === 'ZQB') {
-        document.getElementById('tableBodyBomZQB').insertAdjacentHTML('beforeend', rowHTML);
-    }
-
-    document.getElementById('bomSapInput').value = '';
-    document.getElementById('bomQtyInput').value = '';
-    showToast("Item BOM berhasil ditambahkan!", "success");
-}
-
-function submitPlanningProduksi() {
-    const date = document.getElementById('planDateInput').value;
-    const model = document.getElementById('planModelInput').value;
-    const qty = document.getElementById('planQtyInput').value;
-
-    if (!date || !model || !qty) {
-        showToast("Harap isi Tanggal, Model, dan Target Qty!", "warning");
-        return;
-    }
-
-    const rowHTML = `
-        <tr class="hover:bg-slate-50 transition-colors">
-            <td class="p-3.5 font-medium text-slate-700">${date}</td>
-            <td class="p-3.5"><span class="px-2 py-0.5 ${model === 'ZQD' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'} rounded font-semibold">${model}</span></td>
-            <td class="p-3.5 font-bold text-slate-800">${qty} Unit</td>
-            <td class="p-3.5 text-slate-600 italic text-xs">(Menunggu Hitungan BOM)</td>
-            <td class="p-3.5"><span class="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] font-semibold">Menunggu Picking</span></td>
-            <td class="p-3.5 text-center">
-                <button onclick="this.closest('tr').remove()" class="text-rose-600 hover:text-rose-800 font-semibold text-xs">Hapus</button>
-            </td>
-        </tr>
-    `;
-
-    document.getElementById('planningTableBody').insertAdjacentHTML('beforeend', rowHTML);
-
-    document.getElementById('planDateInput').value = '';
-    document.getElementById('planQtyInput').value = '';
-    showToast("Planning Produksi berhasil disimpan!", "success");
-}
-
-
-/* ==========================================================================
-   9. UI UPDATERS & SINGLE INITIALIZATION
-   ========================================================================== */
-
-function updateEngineStockUI() {
-    const zqdUnitEl = document.getElementById('stok-zqd-unit');
-    const zqdPalletEl = document.getElementById('stok-zqd-pallet-detail');
-    if (zqdUnitEl) zqdUnitEl.innerText = `${engineStock.ZQD.units} Pcs`;
-    if (zqdPalletEl) zqdPalletEl.innerText = `${palletStock.ZQD.terpakai} Pallet`;
-
-    const zqbUnitEl = document.getElementById('stok-zqb-unit');
-    const zqbPalletEl = document.getElementById('stok-zqb-pallet-detail');
-    if (zqbUnitEl) zqbUnitEl.innerText = `${engineStock.ZQB.units} Pcs`;
-    if (zqbPalletEl) zqbPalletEl.innerText = `${palletStock.ZQB.terpakai} Pallet`;
-}
-
-function updatePalletUI() {
-    // ZQD Status
-    const zqdKosong = document.getElementById('pallet-zqd-kosong');
-    const zqdTerpakai = document.getElementById('pallet-zqd-terpakai');
-    const zqdNg = document.getElementById('pallet-zqd-ng');
-    const zqdStatus = document.getElementById('pallet-zqd-status');
-
-    if (zqdKosong) zqdKosong.innerText = `${palletStock.ZQD.kosong} Pallet`;
-    if (zqdTerpakai) zqdTerpakai.innerText = `${palletStock.ZQD.terpakai} Pallet`;
-    if (zqdNg) zqdNg.innerText = `${palletStock.ZQD.ng} Pallet`;
-    if (zqdStatus) {
-        zqdStatus.innerHTML = palletStock.ZQD.kosong > 5 
-            ? `<span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">Ready</span>`
-            : `<span class="px-2 py-0.5 bg-rose-50 text-rose-600 rounded font-medium">Low</span>`;
-    }
-
-    // ZQB Status
-    const zqbKosong = document.getElementById('pallet-zqb-kosong');
-    const zqbTerpakai = document.getElementById('pallet-zqb-terpakai');
-    const zqbNg = document.getElementById('pallet-zqb-ng');
-    const zqbStatus = document.getElementById('pallet-zqb-status');
-
-    if (zqbKosong) zqbKosong.innerText = `${palletStock.ZQB.kosong} Pallet`;
-    if (zqbTerpakai) zqbTerpakai.innerText = `${palletStock.ZQB.terpakai} Pallet`;
-    if (zqbNg) zqbNg.innerText = `${palletStock.ZQB.ng} Pallet`;
-    if (zqbStatus) {
-        zqbStatus.innerHTML = palletStock.ZQB.kosong > 5 
-            ? `<span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">Ready</span>`
-            : `<span class="px-2 py-0.5 bg-rose-50 text-rose-600 rounded font-medium">Low</span>`;
-    }
-
-    // Occupied Ratio Widget
-    const totalTerpakai = palletStock.ZQD.terpakai + palletStock.ZQB.terpakai;
-    const totalPallet = totalTerpakai + palletStock.ZQD.kosong + palletStock.ZQB.kosong + palletStock.ZQD.ng + palletStock.ZQB.ng;
-    const occupiedPct = totalPallet > 0 ? Math.round((totalTerpakai / totalPallet) * 100) : 0;
-
-    const cardVal = document.getElementById('card-pallet-val');
-    const cardProgress = document.getElementById('card-pallet-progress');
-
-    if (cardVal) cardVal.innerText = `${occupiedPct}%`;
-    if (cardProgress) cardProgress.style.width = `${occupiedPct}%`;
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    setInterval(updateClock, 1000);
-    updateClock();
-    updateEngineStockUI();
-    updatePalletUI();
-
-    // Sync counter widget dengan isi running table (per hari)
-    syncWidgetCounters();
-    ['inboundTableBody', 'outboundTableBody', 'fgInboundTableBody', 'fgOutboundTableBody']
-        .forEach(id => {
-            const el = document.getElementById(id);
-            if (el) new MutationObserver(syncWidgetCounters).observe(el, { childList: true });
-        });
+        <!-- Dashboard Home -->
+        <button onclick="closeAllDropdowns();navTo('page-dashboard', this)" data-page="page-dashboard" class="sidebar-btn active-tab w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <i class="ri-bar-chart-box-line text-lg"></i>
+        <span>Dashboard</span>
+        </div>
+        </button>
         
-    // 2. Attach Event Listener Inbound Scanner
-    const inboundPackageInput = document.getElementById('inboundPackageIdInput');
-    if (inboundPackageInput) {
-        inboundPackageInput.addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                processScanInbound(this.value);
-            }
-        });
-        inboundPackageInput.addEventListener('change', function () {
-            processScanInbound(this.value);
-        });
-    }
+        <!-- Menu 1: Penyimpanan Gudang -->
+        <div>
+        <button onclick="toggleDropdown('menu-penyimpanan', 'arrow-penyimpanan')" class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <i class="ri-archive-line text-lg"></i>
+        <span>Penyimpanan</span>
+        </div>
+        <i id="arrow-penyimpanan" class="ri-arrow-down-s-line transition-transform duration-200"></i>
+        </button>
+        <div id="menu-penyimpanan" class="submenu-content pl-7 pr-2 space-y-1 mt-1">
+        <button onclick="navTo('page-penyimpanan-sparepart', this)" data-page="page-penyimpanan-sparepart" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-tools-line text-base"></i>
+        <span>Material Sparepart</span>
+        </button>
+        <button onclick="navTo('page-penyimpanan-consumable', this)" data-page="page-penyimpanan-consumable" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-pencil-ruler-line text-base"></i>
+        <span>Consumable</span>
+        </button>
+        <button onclick="navTo('page-penyimpanan-engine', this)" data-page="page-penyimpanan-engine" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0">
+        <path d="M23.25 8.25c0 -0.53043 -0.2107 -1.03914 -0.5858 -1.41421 -0.3751 -0.37508 -0.8838 -0.58579 -1.4142 -0.58579 -0.1326 0 -0.2598 0.05268 -0.3536 0.14645 -0.0937 0.09376 -0.1464 0.22094 -0.1464 0.35355v1.5h-3v-2c0 -0.13261 -0.0527 -0.25979 -0.1464 -0.35355 -0.0938 -0.09377 -0.221 -0.14645 -0.3536 -0.14645h-1.5l-1.5 -2h-6.5l-1.5 1.5h-2c-0.13261 0 -0.25979 0.05268 -0.35355 0.14645 -0.09377 0.09376 -0.14645 0.22094 -0.14645 0.35355v7c0 0.1326 0.05268 0.2598 0.14645 0.3536 0.09376 0.0937 0.22094 0.1464 0.35355 0.1464h2l2 3.5H11"></path>
+        <path d="M11.75 3.75v-3"></path>
+        <path d="M15.25 0.75h-7"></path>
+        <path d="M0.75 5.25v8"></path>
+        <path d="M0.75 9.25h3"></path>
+        <path d="M21.985 11.674c0.0259 -0.042 0.0402 -0.0901 0.0413 -0.1395 0.0012 -0.0493 -0.0108 -0.0981 -0.0347 -0.1413 -0.024 -0.0431 -0.059 -0.0792 -0.1014 -0.1043 -0.0425 -0.0252 -0.0909 -0.0386 -0.1402 -0.0389h-5.5c-0.1441 0 -0.2842 0.0469 -0.3992 0.1337 -0.1149 0.0868 -0.1984 0.2087 -0.2378 0.3473l-1.588 5.557c-0.0322 0.1123 -0.0379 0.2305 -0.0167 0.3453 0.0213 0.1149 0.069 0.2232 0.1393 0.3165s0.1613 0.169 0.2658 0.221c0.1046 0.0521 0.2198 0.0792 0.3366 0.0792h2l-1.5 5 7.772 -7.315c0.056 -0.0552 0.0946 -0.1256 0.1108 -0.2026 0.0162 -0.077 0.0094 -0.157 -0.0196 -0.2301 -0.0291 -0.0731 -0.079 -0.136 -0.1436 -0.1809 -0.0646 -0.0449 -0.141 -0.0697 -0.2196 -0.0714h-3l2.235 -3.576Z"></path>
+        </svg>
+        <span>Stok Engine</span>
+        </button>
+        <button onclick="navTo('page-pallet-engine', this)" data-page="page-pallet-engine" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 shrink-0">
+        <path d="M22 22h-3v-2h-5.5v2h-3v-2H5v2H2v-4h20zM18.1025 2.00488C18.6067 2.05621 19 2.48232 19 3v12c0 0.5523 -0.4477 1 -1 1H6c-0.55228 0 -1 -0.4477 -1 -1V3l0.00488 -0.10254C5.05621 2.39333 5.48232 2 6 2h12zM7 14h10V4h-2.25v5.5L12 7.5l-2.75 2V4H7z"></path>
+        </svg>
+        <span>Pallet Engine</span>
+        </button>
+        </div>
+        </div>
+        
+        <!-- Menu 2: Inbound Material -->
+        <div>
+        <button onclick="toggleDropdown('menu-inbound', 'arrow-inbound')" class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <i class="ri-inbox-unarchive-line text-lg"></i>
+        <span>Inbound Material</span>
+        </div>
+        <i id="arrow-inbound" class="ri-arrow-down-s-line transition-transform duration-200"></i>
+        </button>
+        <div id="menu-inbound" class="submenu-content pl-7 pr-2 space-y-1 mt-1">
+        <button onclick="navTo('page-inbound-sparepart', this)" data-page="page-inbound-sparepart" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-tools-line text-base"></i>
+        <span>Material Sparepart</span>
+        </button>
+        <button onclick="navTo('page-inbound-consumable', this)" data-page="page-inbound-consumable" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-pencil-ruler-line text-base"></i>
+        <span>Consumable</span>
+        </button>
+        </div>
+        </div>
+        
+        <!-- Menu 3: Outbound Material -->
+        <div>
+        <button onclick="toggleDropdown('menu-outbound', 'arrow-outbound')" class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <i class="ri-inbox-archive-line text-lg"></i>
+        <span>Outbound Material</span>
+        </div>
+        <i id="arrow-outbound" class="ri-arrow-down-s-line transition-transform duration-200"></i>
+        </button>
+        <div id="menu-outbound" class="submenu-content pl-7 pr-2 space-y-1 mt-1">
+        <button onclick="navTo('page-outbound-prep', this)" data-page="page-outbound-prep" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-tools-line text-base"></i>
+        <span>Material Sparepart</span>
+        </button>
+        <button onclick="navTo('page-outbound-consumable', this)" data-page="page-outbound-consumable" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-pencil-ruler-line text-base"></i>
+        <span>Consumable</span>
+        </button>
+        </div>
+        </div>
+        
+        <!-- Menu 4: Finishgood -->
+        <div>
+        <button onclick="toggleDropdown('menu-fg', 'arrow-fg')" class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <i class="ri-checkbox-circle-line text-lg"></i>
+        <span>Finish Good</span>
+        </div>
+        <i id="arrow-fg" class="ri-arrow-down-s-line transition-transform duration-200"></i>
+        </button>
+        <div id="menu-fg" class="submenu-content pl-7 pr-2 space-y-1 mt-1">
+        <button onclick="navTo('page-fg-inbound', this)" data-page="page-fg-inbound" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-arrow-down-circle-line text-base"></i>
+        <span>Inbound</span>
+        </button>
+        <button onclick="navTo('page-fg-outbound', this)" data-page="page-fg-outbound" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-arrow-up-circle-line text-base"></i>
+        <span>Outbound</span>
+        </button>
+        </div>
+        </div>
+        
+        <!-- Menu 5: Master Data & Planning Produksi (DITAMBAHKAN DI SINI) -->
+        <div>
+        <button onclick="toggleDropdown('menu-master-planning', 'arrow-master-planning')" class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <i class="ri-database-2-line text-lg"></i>
+        <span>Master Planning</span>
+        </div>
+        <i id="arrow-master-planning" class="ri-arrow-down-s-line transition-transform duration-200"></i>
+        </button>
+        <div id="menu-master-planning" class="submenu-content pl-7 pr-2 space-y-1 mt-1">
+        <button onclick="navTo('page-master-material', this)" data-page="page-master-material" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-file-list-3-line text-base"></i>
+        <span>Master Material</span>
+        </button>
+        <button onclick="navTo('page-master-bom', this)" data-page="page-master-bom" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-git-merge-line text-base"></i>
+        <span>Master BOM</span>
+        </button>
+        <button onclick="navTo('page-planning-produksi', this)" data-page="page-planning-produksi" class="sidebar-btn w-full flex items-center gap-2.5 text-left py-2 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-md transition-colors">
+        <i class="ri-calendar-event-line text-base"></i>
+        <span>Planning Produksi</span>
+        </button>
+        </div>
+        </div>
+        
+        <!-- Direct Menu 6: Manajemen Pallet -->
+        <button onclick="closeAllDropdowns();navTo('page-in-out-pallet-engine', this)" data-page="page-in-out-pallet-engine" class="sidebar-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 shrink-0">
+        <path d="M22 22h-3v-2h-5.5v2h-3v-2H5v2H2v-4h20zM18.1025 2.00488C18.6067 2.05621 19 2.48232 19 3v12c0 0.5523 -0.4477 1 -1 1H6c-0.55228 0 -1 -0.4477 -1 -1V3l0.00488 -0.10254C5.05621 2.39333 5.48232 2 6 2h12zM7 14h10V4h-2.25v5.5L12 7.5l-2.75 2V4H7z"></path>
+        </svg>
+        <span>Manajemen Pallet</span>
+        </div>
+        </button>
+        
+        <!-- Direct Menu 7: Antrean Picking -->
+        <button onclick="closeAllDropdowns();navTo('page-antrean-picking', this)" data-page="page-antrean-picking" class="sidebar-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <i class="ri-list-check-2 text-lg"></i>
+        <span>Antrean Picking</span>
+        </div>
+        </button>
+        
+        <!-- Direct Menu 8: Pengaturan -->
+        <button onclick="closeAllDropdowns();navTo('page-pengaturan', this)" data-page="page-pengaturan" class="sidebar-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all">
+        <div class="flex items-center gap-3">
+        <i class="ri-settings-4-line text-lg"></i>
+        <span>Pengaturan</span>
+        </div>
+        </button>
+        
+        </div>
+        
+        <div class="p-4 border-t border-slate-200 text-xs text-slate-400 flex justify-between items-center">
+        <span>System v2.4</span>
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+        </div>
+        </aside>
 
-    // 3. Attach Event Listener Outbound Scanner
-    const outboundPackageInput = document.getElementById('outboundPackageIdInput');
-    if (outboundPackageInput) {
-        outboundPackageInput.addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                processScanOutbound(this.value);
-            }
-        });
-    }
-});
 
-// Array penampung Master Data Material (sesuaikan nama variabel jika berbeda di kode Anda)
-window.masterMaterialList = window.masterMaterialList || [];
+        <!-- MAIN CONTENT AREA -->
+        <main class="flex-1 min-h-0 overflow-y-auto bg-slate-50 p-4 md:p-6 transition-all duration-300">
+            
+            <!-- ================= PAGE: DASHBOARD ================= -->
+            <div id="page-dashboard" class="page-content space-y-6">
+                
+<!-- ============ 6 WIDGET DASHBOARD - RESPONSIVE ============ -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
 
-/**
- * Fungsi untuk mencocokkan SAP yang diketik/discan
- * dengan Master Data Material, lalu mengisi Nama Material dan Lokasi Area (Grup).
- */
-function autofillMaterialInfo() {
-    const sapVal = document.getElementById('inboundSapInput').value.trim();
-    const nameInput = document.getElementById('inboundMaterialNameInput');
-    const binInput = document.getElementById('inboundBinInput');
+    <!-- Widget 1: Material Inbound -->
+    <div onclick="openWidgetRunning('Material Inbound')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+        <div class="absolute -top-10 -right-10 w-28 h-28 bg-blue-50/70 rounded-full pointer-events-none"></div>
 
-    if (!sapVal) {
-        nameInput.value = '';
-        binInput.value = '';
-        return;
-    }
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
+            <div class="min-w-0 flex-1">
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">ACTIVITY INBOUND</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">Material Inbound</h3>
+            </div>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                <i class="ri-download-2-line text-xl"></i>
+            </div>
+        </div>
 
-    // Cari item berdasarkan Kode SAP di Master Data
-    const foundItem = window.masterMaterialList.find(item => String(item.sap) === sapVal);
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-inbound-val" class="text-3xl font-bold text-blue-600 leading-none">0</span>
+                <span class="text-xs text-slate-400 font-medium">Items</span>
+            </div>
+            <div class="w-16 h-8 shrink-0">
+                <svg class="w-full h-full" viewBox="0 0 100 30" preserveAspectRatio="none">
+                    <path id="sparkline-inbound" class="sparkline-path" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M0,25 L20,25 L40,25 L60,25 L80,25 L100,25" />
+                </svg>
+            </div>
+        </div>
 
-    if (foundItem) {
-        nameInput.value = foundItem.namaMaterial || foundItem.nama || '';
-        binInput.value = foundItem.grup || foundItem.group || '';
-    } else {
-        nameInput.value = '';
-        binInput.value = '';
-    }
-}
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+            <span class="truncate">Status: Running Active</span>
+            <i class="ri-arrow-right-line text-blue-600 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
+        </div>
+    </div>
 
-/**
- * Pastikan saat pendaftaran/simpan Master Material baru, 
- * datanya tersimpan ke window.masterMaterialList
- */
-/**
- * Submit Master Material — versi final (gabungan)
- * Simpan ke array + render ke tabel
- */
-function submitMasterMaterial() {
-    const sap = document.getElementById('masterSapInput').value.trim();
-    const name = document.getElementById('masterMaterialNameInput').value.trim();
-    const group = document.getElementById('masterGroupInput').value;
-    const model = document.getElementById('masterModelInput').value;
-    const snp = document.getElementById('masterSnpInput').value || 1;
+    <!-- Widget 2: Material Outbound -->
+    <div onclick="openWidgetRunning('Material Outbound')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+        <div class="absolute -top-10 -right-10 w-28 h-28 bg-orange-50/70 rounded-full pointer-events-none"></div>
 
-    if (!sap || !name || !group || !model) {
-        showToast("Harap lengkapi semua kolom input!", "warning");
-        return;
-    }
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
+            <div class="min-w-0 flex-1">
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">ACTIVITY OUTBOUND</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">Material Outbound</h3>
+            </div>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center group-hover:bg-orange-500 group-hover:text-white transition-colors">
+                <i class="ri-upload-2-line text-xl"></i>
+            </div>
+        </div>
 
-    // Simpan ke array (untuk autofill SAP di form Inbound)
-    window.masterMaterialList.push({
-        sap: sap,
-        namaMaterial: name,
-        grup: group,
-        model: model,
-        snp: snp
-    });
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-outbound-val" class="text-3xl font-bold text-orange-500 leading-none">0</span>
+                <span class="text-xs text-slate-400 font-medium">Items</span>
+            </div>
+            <div class="w-16 h-8 shrink-0">
+                <svg class="w-full h-full" viewBox="0 0 100 30" preserveAspectRatio="none">
+                    <path id="sparkline-outbound" class="sparkline-path" fill="none" stroke="#f97316" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M0,25 L20,25 L40,25 L60,25 L80,25 L100,25" />
+                </svg>
+            </div>
+        </div>
 
-    // Render ke tabel
-    const rowHTML = `
-        <tr class="hover:bg-slate-50 transition-colors">
-            <td class="p-3 font-medium text-slate-700">${model === 'ZQD' ? noZqd++ : noZqb++}</td>
-            <td class="p-3 font-semibold text-slate-800">${sap}</td>
-            <td class="p-3 text-slate-600">${name}</td>
-            <td class="p-3"><span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-medium">${group}</span></td>
-            <td class="p-3 text-center font-bold text-slate-700">${snp} pcs</td>
-            <td class="p-3 text-center">
-                <button onclick="this.closest('tr').remove()" class="text-rose-600 hover:text-rose-800 font-semibold text-xs">Hapus</button>
-            </td>
-        </tr>
-    `;
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+            <span class="truncate">Status: Running Active</span>
+            <i class="ri-arrow-right-line text-orange-500 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
+        </div>
+    </div>
 
-    if (model === 'ZQD') {
-        document.getElementById('tableBodyMaterialZQD')?.insertAdjacentHTML('beforeend', rowHTML);
-    } else if (model === 'ZQB') {
-        document.getElementById('tableBodyMaterialZQB')?.insertAdjacentHTML('beforeend', rowHTML);
-    }
+    <!-- Widget 3: FinishGood Inbound -->
+    <div onclick="openWidgetRunning('FG Inbound')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+        <div class="absolute -top-10 -right-10 w-28 h-28 bg-emerald-50/70 rounded-full pointer-events-none"></div>
 
-    // Reset form
-    document.getElementById('masterSapInput').value = '';
-    document.getElementById('masterMaterialNameInput').value = '';
-    document.getElementById('masterGroupInput').value = '';
-    document.getElementById('masterModelInput').value = '';
-    document.getElementById('masterSnpInput').value = '';
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
+            <div class="min-w-0 flex-1">
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">FINISHGOOD</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">FinishGood Inbound</h3>
+            </div>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-emerald-50 text-emerald-500 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                <i class="ri-checkbox-circle-line text-xl"></i>
+            </div>
+        </div>
 
-    showToast("Master Material berhasil ditambahkan!", "success");
-}
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-fg-inbound-val" class="text-3xl font-bold text-emerald-500 leading-none">0</span>
+                <span class="text-xs text-slate-400 font-medium">Pcs</span>
+            </div>
+            <div class="w-16 h-8 shrink-0">
+                <svg class="w-full h-full" viewBox="0 0 100 30" preserveAspectRatio="none">
+                    <path id="sparkline-fg-inbound" class="sparkline-path" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M0,25 L20,25 L40,25 L60,25 L80,25 L100,25" />
+                </svg>
+            </div>
+        </div>
 
-// ==========================================================
-// WMS ENGINE - GOOGLE APPS SCRIPT DATABASE
-// ==========================================================
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+            <span class="truncate">Status: Running Active</span>
+            <i class="ri-arrow-right-line text-emerald-500 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
+        </div>
+    </div>
 
-// 1. SETUP OTOMATIS TAB & HEADER DI GOOGLE SPREADSHEET
-function setupDatabase() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  
-  // Daftar Tab dan Header Kolom
-  const tables = [
-    {
-      name: 'Master_Material',
-      headers: ['Kode SAP', 'Nama Material', 'Grup Area', 'Model Engine', 'SNP (Qty/Box)', 'Tanggal Input']
-    },
-    {
-      name: 'Master_BOM',
-      headers: ['BOM ID', 'Kode Engine', 'Kode SAP Material', 'Nama Material', 'Qty Per Engine', 'Satuan']
-    },
-    {
-      name: 'Planning_Produksi',
-      headers: ['Plan ID', 'Tanggal Plan', 'Kode Engine', 'Target Qty (Pcs)', 'Line Produksi', 'Status', 'Catatan']
-    },
-    {
-      name: 'Inbound_Sparepart',
-      headers: ['Tanggal & Jam', 'Package ID', 'Kode SAP', 'Nama Material', 'Batch', 'Qty', 'Lokasi']
-    },
-    {
-      name: 'Outbound_Sparepart',
-      headers: ['Tanggal & Jam', 'Package ID', 'Kode SAP', 'Nama Material', 'Batch', 'Qty', 'Lokasi Asal']
-    }
-  ];
+    <!-- Widget 4: FinishGood Outbound -->
+    <div onclick="openWidgetRunning('FG Outbound')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+        <div class="absolute -top-10 -right-10 w-28 h-28 bg-indigo-50/70 rounded-full pointer-events-none"></div>
 
-  tables.forEach(table => {
-    let sheet = ss.getSheetByName(table.name);
-    // Buat Tab jika belum ada
-    if (!sheet) {
-      sheet = ss.insertSheet(table.name);
-      sheet.appendRow(table.headers);
-      
-      // Styling Header Otomatis (Warna Biru, Font Bold, Text Putih)
-      const headerRange = sheet.getRange(1, 1, 1, table.headers.length);
-      headerRange.setFontWeight('bold');
-      headerRange.setBackground('#2563eb');
-      headerRange.setFontColor('#ffffff');
-      sheet.setFrozenRows(1);
-    }
-  });
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
+            <div class="min-w-0 flex-1">
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">SHIPPING</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">FinishGood Outbound</h3>
+            </div>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-indigo-50 text-indigo-500 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                <i class="ri-truck-line text-xl"></i>
+            </div>
+        </div>
 
-  // Hapus tab bawaan 'Sheet1' / 'Kertas1' jika ada tab lain yang sudah dibuat
-  const defaultSheet = ss.getSheetByName('Sheet1') || ss.getSheetByName('Sheet 1');
-  if (defaultSheet && ss.getSheets().length > 1) {
-    ss.deleteSheet(defaultSheet);
-  }
-}
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-fg-outbound-val" class="text-3xl font-bold text-indigo-600 leading-none">0</span>
+                <span class="text-xs text-slate-400 font-medium">Unit</span>
+            </div>
+            <div class="w-16 h-8 shrink-0">
+                <svg class="w-full h-full" viewBox="0 0 100 30" preserveAspectRatio="none">
+                    <path id="sparkline-fg-outbound" class="sparkline-path" fill="none" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M0,25 L20,25 L40,25 L60,25 L80,25 L100,25" />
+                </svg>
+            </div>
+        </div>
 
-// 2. ENDPOINT GET (Mengambil Data dari Spreadsheet ke Dashboard Web)
-function doGet(e) {
-  setupDatabase(); // Pastikan tab selalu siap
-  const action = e.parameter.action;
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let result = { status: 'success', data: [] };
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+            <span class="truncate">Status: Running Active</span>
+            <i class="ri-arrow-right-line text-indigo-600 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
+        </div>
+    </div>
 
-  try {
-    if (action === 'getMasterMaterial') {
-      result.data = getSheetData(ss.getSheetByName('Master_Material'));
-    } else if (action === 'getMasterBOM') {
-      result.data = getSheetData(ss.getSheetByName('Master_BOM'));
-    } else if (action === 'getPlanningProduksi') {
-      result.data = getSheetData(ss.getSheetByName('Planning_Produksi'));
-    } else if (action === 'getAllData') {
-      result.data = {
-        masterMaterial: getSheetData(ss.getSheetByName('Master_Material')),
-        masterBOM: getSheetData(ss.getSheetByName('Master_BOM')),
-        planningProduksi: getSheetData(ss.getSheetByName('Planning_Produksi')),
-        inbound: getSheetData(ss.getSheetByName('Inbound_Sparepart')),
-        outbound: getSheetData(ss.getSheetByName('Outbound_Sparepart'))
-      };
-    } else {
-      result = { status: 'error', message: 'Action GET tidak valid' };
-    }
-  } catch (err) {
-    result = { status: 'error', message: err.toString() };
-  }
+    <!-- Widget 5: Antrean Picking -->
+    <div onclick="openWidgetRunning('Antrean Picking')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+        <div class="absolute -top-10 -right-10 w-28 h-28 bg-amber-50/70 rounded-full pointer-events-none"></div>
 
-  return ContentService.createTextOutput(JSON.stringify(result))
-    .setMimeType(ContentService.MimeType.JSON);
-}
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
+            <div class="min-w-0 flex-1">
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">QUEUE TASK</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">Antrean Picking</h3>
+            </div>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-amber-50 text-amber-500 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                <i class="ri-time-line text-xl"></i>
+            </div>
+        </div>
 
-// Helper membaca isi Sheet ke bentuk JSON Array
-function getSheetData(sheet) {
-  if (!sheet) return [];
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return []; // Hanya ada header
-  
-  const headers = data[0];
-  const rows = data.slice(1);
-  
-  return rows.map(row => {
-    let obj = {};
-    headers.forEach((header, index) => {
-      let val = row[index];
-      if (val instanceof Date) {
-        val = Utilities.formatDate(val, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-      }
-      obj[header] = val;
-    });
-    return obj;
-  });
-}
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-picking-val" class="text-3xl font-bold text-amber-500 leading-none">0</span>
+            </div>
+            <span class="text-[10px] text-amber-600 font-semibold bg-amber-50 px-2.5 py-1 rounded-full whitespace-nowrap shrink-0">Pending Tasks</span>
+        </div>
 
-// 3. ENDPOINT POST (Menyimpan Data Baru dari Web ke Spreadsheet)
-function doPost(e) {
-  setupDatabase();
-  let result = { status: 'success' };
-  
-  try {
-    const postData = JSON.parse(e.postData.contents);
-    const action = postData.action;
-    const payload = postData.data;
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+        <div class="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium relative z-10">
+            <span class="truncate">Status: High Priority</span>
+            <i class="ri-arrow-right-line text-amber-500 group-hover:translate-x-1 transition-transform shrink-0 ml-2"></i>
+        </div>
+    </div>
 
-    if (action === 'addMasterMaterial') {
-      const sheet = ss.getSheetByName('Master_Material');
-      const now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-      sheet.appendRow([
-        payload.sap,
-        payload.namaMaterial,
-        payload.grup,
-        payload.model,
-        payload.snp,
-        now
-      ]);
-      result.message = 'Master Material berhasil disimpan!';
-    } 
-    else if (action === 'addMasterBOM') {
-      const sheet = ss.getSheetByName('Master_BOM');
-      sheet.appendRow([
-        payload.bomId || ('BOM-' + Date.now()),
-        payload.kodeEngine,
-        payload.kodeSap,
-        payload.namaMaterial,
-        payload.qty,
-        payload.satuan || 'Pcs'
-      ]);
-      result.message = 'Master BOM berhasil disimpan!';
-    }
-    else if (action === 'addPlanningProduksi') {
-      const sheet = ss.getSheetByName('Planning_Produksi');
-      sheet.appendRow([
-        payload.planId || ('PLAN-' + Date.now()),
-        payload.tanggalPlan,
-        payload.kodeEngine,
-        payload.targetQty,
-        payload.lineProduksi || 'Line 1',
-        payload.status || 'Planned',
-        payload.catatan || ''
-      ]);
-      result.message = 'Planning Produksi berhasil disimpan!';
-    }
-    else if (action === 'addInbound') {
-      const sheet = ss.getSheetByName('Inbound_Sparepart');
-      const now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-      sheet.appendRow([
-        now,
-        payload.packageId,
-        payload.sap,
-        payload.namaMaterial,
-        payload.batch,
-        payload.qty,
-        payload.lokasi
-      ]);
-      result.message = 'Inbound Material berhasil disimpan!';
-    }
-    else {
-      result = { status: 'error', message: 'Action POST tidak dikenal' };
-    }
-  } catch (err) {
-    result = { status: 'error', message: err.toString() };
-  }
+    <!-- Widget 6: Kapasitas Pallet Engine -->
+    <div onclick="openWidgetRunning('Kapasitas Pallet Engine')" class="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+        <div class="absolute -top-10 -right-10 w-28 h-28 bg-purple-50/70 rounded-full pointer-events-none"></div>
 
-  return ContentService.createTextOutput(JSON.stringify(result))
-    .setMimeType(ContentService.MimeType.JSON);
-}
+        <div class="flex items-start justify-between gap-3 mb-4 relative z-10">
+            <div class="min-w-0 flex-1">
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block leading-relaxed">STORAGE UNIT</span>
+                <h3 class="text-base font-bold text-slate-800 tracking-tight mt-1 leading-snug truncate">Pallet Engine</h3>
+            </div>
+            <div class="w-10 h-10 shrink-0 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                <i class="ri-archive-2-line text-xl"></i>
+            </div>
+        </div>
 
-/* ==========================================================================
-   10. SYNC WIDGET COUNTER DENGAN RUNNING TABLE (PER HARI)
-   ========================================================================== */
-function syncWidgetCounters() {
-    // Ambil tanggal hari ini: "DD-MM-YY" (sesuai format getFormattedDateTime)
-    const today = getFormattedDateTime().split(',')[0].trim();
+        <div class="flex items-end justify-between gap-3 relative z-10 mb-4">
+            <div class="flex items-baseline gap-2 min-w-0">
+                <span id="card-pallet-val" class="text-3xl font-bold text-purple-600 leading-none">0%</span>
+                <span class="text-xs text-slate-400 font-medium">Occupied</span>
+            </div>
+        </div>
 
-    // Helper: total kolom qty dari tbody, filter tanggal = hari ini
-    const getTotalToday = (tbodyId, qtyColIndex) => {
-        const tbody = document.getElementById(tbodyId);
-        if (!tbody) return 0;
+        <div class="pt-4 mt-auto border-t border-slate-100 relative z-10">
+            <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                <div id="card-pallet-progress" class="bg-purple-600 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
 
-        let total = 0;
-        tbody.querySelectorAll('tr').forEach(tr => {
-            const cells = tr.children;
+</div>
+<!-- ============ END 6 WIDGET ============ -->
+			</div>
+            <!-- ================= VIEW: WIDGET MONITOR RUNNING TABLE (Dynamic) ================= -->
+            <div id="page-widget-table" class="page-content hidden space-y-4">
+            <div>
+            <button onclick="navTo('page-dashboard')" class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-blue-600 transition-colors mb-2">
+            <i class="ri-arrow-left-line text-sm"></i>
+            <span>Kembali ke Dashboard</span>
+            </button>
+            <h2 id="widget-table-title" class="text-xl font-bold text-slate-800">Running Table</h2>
+            <p class="text-xs text-slate-500 mt-1">Halaman khusus tabel running monitor kategori terpilih.</p>
+            </div>
+            
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-slate-100 flex justify-between items-center">
+            <span class="text-xs font-semibold uppercase text-slate-400">Running Table</span>
+            
+            </div>
+            <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+            <thead id="widget-table-head" class="bg-slate-50 text-slate-500 border-b border-slate-200">
+            <!-- Header kolom akan di-set dinamis oleh JS -->
+            </thead>
+            <tbody id="widget-table-body" class="divide-y divide-slate-100 text-slate-700">
+            <!-- Data akan di-clone dari tabel sumber oleh JS -->
+            </tbody>
+            </table>
+            </div>
+            </div>
+            </div>
 
-            // Cek apakah tanggal (kolom 0) = hari ini
-            const dateText = (cells[0]?.innerText || '').split(',')[0].trim();
-            if (dateText !== today) return;
+            <!-- ================= PAGE TEMPLATE: PENYIMPANAN MATERIAL SPAREPART ================= -->
+            <div id="page-penyimpanan-sparepart" class="page-content hidden space-y-6">
+            
+            <!-- HEADER HALAMAN & TOMBOL REFRESH -->
+            <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+            <h2 class="text-xl font-bold text-slate-800">Penyimpanan - Material Sparepart</h2>
+            <button onclick="fetchInventoryData()" class="self-start sm:self-auto px-3 py-1.5 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-50 transition-colors">
+            Refresh Data
+            </button>
+            </div>
+            
+            <!-- TABEL 1: RINGKASAN STOK MATERIAL SPAREPART -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-slate-200 flex flex-col sm:flex-row justify-between gap-3 items-center bg-slate-50">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700">Ringkasan Stok Material Sparepart</h3>
+            <div class="w-full sm:w-64">
+            <input id="searchSummaryInput" onkeyup="filterSummaryTable()" type="text" placeholder="Cari SAP / Nama Material..." class="w-full text-xs px-3 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 bg-white">
+            </div>
+            </div>
+            <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+            <thead class="bg-slate-100 text-slate-600 border-b border-slate-200">
+            <tr>
+            <th class="p-3.5 font-semibold">SAP</th>
+            <th class="p-3.5 font-semibold">Nama Material</th>
+            <th class="p-3.5 font-semibold">Lokasi</th>
+            <th class="p-3.5 font-semibold text-center">Stok</th>
+            <th class="p-3.5 font-semibold text-center">Status</th>
+            </tr>
+            </thead>
+            <tbody id="tableBodySummary" class="divide-y divide-slate-100">
+            <tr>
+            <td colspan="5" class="p-4 text-center text-slate-400">Memuat data stok...</td>
+            </tr>
+            </tbody>
+            </table>
+            </div>
+            </div>
+            
+            <!-- GRID 2 TABEL: RUNNING INBOUND & OUTBOUND SPAREPART -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            <!-- TABEL 2: RUNNING TABLE INBOUND SPAREPART -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-slate-200 bg-slate-50">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700">Running Table Inbound Sparepart</h3>
+            </div>
+            <div class="overflow-x-auto max-h-80 flex-1">
+            <table class="w-full text-left text-xs">
+            <thead class="bg-slate-100 text-slate-600 border-b border-slate-200 sticky top-0 bg-slate-100">
+            <tr>
+            <th class="p-3 font-semibold">Tanggal & Jam</th>
+            <th class="p-3 font-semibold">Package ID (S)</th>
+            <th class="p-3 font-semibold">Kode SAP</th>
+            <th class="p-3 font-semibold">Nama Material</th>
+            <th class="p-3 font-semibold">Batch</th>
+            <th class="p-3 font-semibold text-center">Qty</th>
+            </tr>
+            </thead>
+            <tbody id="tableBodyRunningInbound" class="divide-y divide-slate-100">
+            <!-- Data Inbound Dirender di Sini -->
+            </tbody>
+            </table>
+            </div>
+            </div>
+            
+            <!-- TABEL 3: RUNNING TABLE OUTBOUND PREPARATION -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-slate-200 bg-slate-50">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700">Running Table Outbound Preparation</h3>
+            </div>
+            <div class="overflow-x-auto max-h-80 flex-1">
+            <table class="w-full text-left text-xs">
+            <thead class="bg-slate-100 text-slate-600 border-b border-slate-200 sticky top-0 bg-slate-100">
+            <tr>
+            <th class="p-3 font-semibold">Tanggal & Jam</th>
+            <th class="p-3 font-semibold">Package ID (S)</th>
+            <th class="p-3 font-semibold">Kode SAP</th>
+            <th class="p-3 font-semibold">Nama Material</th>
+            <th class="p-3 font-semibold">Batch</th>
+            <th class="p-3 font-semibold text-center">Qty Out</th>
+            </tr>
+            </thead>
+            <tbody id="tableBodyRunningOutbound" class="divide-y divide-slate-100">
+            <!-- Data Outbound Dirender di Sini -->
+            </tbody>
+            </table>
+            </div>
+            </div>
+            
+            </div>
+            </div>
+            
 
-            // Ambil Qty
-            const qtyText = cells[qtyColIndex]?.innerText || '';
-            const num = parseFloat(qtyText.replace(/[^\d.-]/g, ''));
-            if (!isNaN(num)) total += num;
-        });
-        return total;
-    };
+            <!-- ================= PAGE TEMPLATE: PENYIMPANAN CONSUMABLE ================= -->
+            <div id="page-penyimpanan-consumable" class="page-content hidden space-y-4">
+                <h2 class="text-xl font-bold text-slate-800">Penyimpanan - Consumable</h2>
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100">
+                    <h3 class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Ringkasan Stok Consumable</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                                <tr>
+                                    <th class="p-3.5 font-semibold">SKU</th>
+                                    <th class="p-3.5 font-semibold">Nama Item</th>
+                                    <th class="p-3.5 font-semibold">Lokasi</th>
+                                    <th class="p-3.5 font-semibold">Stok</th>
+                                    <th class="p-3.5 font-semibold">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
 
-    // ── WIDGET 1: Material Inbound (Qty = index 5)
-    const c1 = document.getElementById('card-inbound-val');
-    if (c1) c1.innerText = getTotalToday('inboundTableBody', 5);
+            <!-- ================= PAGE TEMPLATE: PENYIMPANAN STOK ENGINE ================= -->
+            <div id="page-penyimpanan-engine" class="page-content hidden space-y-6">
+                <h2 class="text-xl font-bold text-slate-800">Penyimpanan - Stok Engine</h2>
+                
+                <!-- Ringkasan Stok Engine -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100">
+                        <h3 class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Ringkasan Stok Engine</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                                <tr>
+                                    <th class="p-3.5 font-semibold">Engine ID</th>
+                                    <th class="p-3.5 font-semibold">Lokasi</th>
+                                    <th class="p-3.5 font-semibold">Stok Engine</th>
+                                    <th class="p-3.5 font-semibold">Pallet Terpakai</th>
+                                    <th class="p-3.5 font-semibold">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                <tr>
+                                    <td class="p-3.5 font-semibold text-slate-800">ZQD</td>
+                                    <td class="p-3.5">Zone A</td>
+                                    <td id="stok-zqd-unit" class="p-3.5 font-semibold text-slate-900">0 Pcs</td>
+                                    <td id="stok-zqd-pallet-detail" class="p-3.5 text-slate-600 font-medium">0 Pallet</td>
+                                    <td class="p-3.5"><span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">Ready</span></td>
+                                </tr>
+                                <tr>
+                                    <td class="p-3.5 font-semibold text-slate-800">ZQB</td>
+                                    <td class="p-3.5">Zone B</td>
+                                    <td id="stok-zqb-unit" class="p-3.5 font-semibold text-slate-900">0 Pcs</td>
+                                    <td id="stok-zqb-pallet-detail" class="p-3.5 text-slate-600 font-medium">0 Pallet</td>
+                                    <td class="p-3.5"><span class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded font-medium">Ready</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
-    // ── WIDGET 2: Material Outbound (Qty = index 5)
-    const c2 = document.getElementById('card-outbound-val');
-    if (c2) c2.innerText = getTotalToday('outboundTableBody', 5);
+                <!-- Shared Running Table Activity Engine -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100 flex justify-between items-center">
+                        <h3 class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Running Table Stok Engine</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                                <tr>
+                                    <th class="p-3.5 font-semibold">Tanggal</th>
+                                    <th class="p-3.5 font-semibold">ID Transaksi</th>
+                                    <th class="p-3.5 font-semibold">Engine ID</th>
+                                    <th class="p-3.5 font-semibold">Pallet ID</th>
+                                    <th class="p-3.5 font-semibold">Qty</th>
+                                    <th class="p-3.5 font-semibold">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="engineRunningTableBody" class="divide-y divide-slate-100 text-slate-700">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
 
-    // ── WIDGET 3: FG Inbound (Qty = index 4)
-    const c3 = document.getElementById('card-fg-inbound-val');
-    if (c3) c3.innerText = getTotalToday('fgInboundTableBody', 4);
+            <!-- ================= PAGE TEMPLATE: PENYIMPANAN PALLET ENGINE ================= -->
+            <div id="page-pallet-engine" class="page-content hidden space-y-6">
+                <h2 class="text-xl font-bold text-slate-800">Penyimpanan - Stok Pallet Engine</h2>
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100">
+                    <h3 class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Ringkasan Stok Pallet Engine</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                                <tr>
+                                    <th class="p-3.5 font-semibold">Pallet ID</th>
+                                    <th class="p-3.5 font-semibold">Stok Kosong</th>
+                                    <th class="p-3.5 font-semibold">Stok Terpakai</th>
+                                    <th class="p-3.5 font-semibold">NG</th>
+                                    <th class="p-3.5 font-semibold">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                <tr class="hover:bg-slate-50">
+                                    <td class="p-3.5 font-semibold text-slate-800">ZQD</td>
+                                    <td id="pallet-zqd-kosong" class="p-3.5 font-semibold text-slate-800">0 Pallet</td>
+                                    <td id="pallet-zqd-terpakai" class="p-3.5 font-medium text-slate-600">0 Pallet</td>
+                                    <td id="pallet-zqd-ng" class="p-3.5 font-semibold text-rose-600">-</td>
+                                    <td id="pallet-zqd-status" class="p-3.5"><span class="px-2 py-0.5 bg-rose-50 text-rose-600 rounded font-medium">Low</span></td>
+                                </tr>
+                                <tr class="hover:bg-slate-50">
+                                    <td class="p-3.5 font-semibold text-slate-800">ZQB</td>
+                                    <td id="pallet-zqb-kosong" class="p-3.5 font-semibold text-slate-800">0 Pallet</td>
+                                    <td id="pallet-zqb-terpakai" class="p-3.5 font-medium text-slate-600">0 Pallet</td>
+                                    <td id="pallet-zqb-ng" class="p-3.5 font-semibold text-rose-600">-</td>
+                                    <td id="pallet-zqb-status" class="p-3.5"><span class="px-2 py-0.5 bg-rose-50 text-rose-600 rounded font-medium">Low</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
-    // ── WIDGET 4: FG Outbound (Qty = index 4)
-    const c4 = document.getElementById('card-fg-outbound-val');
-    if (c4) c4.innerText = getTotalToday('fgOutboundTableBody', 4);
+                <!-- Running Table / Riwayat di Stok Pallet Engine -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100 flex justify-between items-center">
+                        <h3 class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Running Table Pallet Engine</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                                <tr>
+                                    <th class="p-3.5 font-semibold">Tanggal</th>
+                                    <th class="p-3.5 font-semibold">ID Transaksi</th>
+                                    <th class="p-3.5 font-semibold">Pallet ID</th>
+                                    <th class="p-3.5 font-semibold">Qty</th>
+                                    <th class="p-3.5 font-semibold">Catatan</th>
+                                    <th class="p-3.5 font-semibold">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="palletRunningTableBody" class="divide-y divide-slate-100 text-slate-700">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
 
-    // ── WIDGET 5: Antrean Picking (jumlah baris planning)
-    const c5 = document.getElementById('card-picking-val');
-    const planBody = document.getElementById('planningTableBody');
-    if (c5 && planBody) c5.innerText = planBody.querySelectorAll('tr').length;
+            <!-- ================= PAGE TEMPLATE: INBOUND SPAREPART ================= -->
+            <div id="page-inbound-sparepart" class="page-content hidden space-y-6">
+            <h2 class="text-xl font-bold text-slate-800">Inbound Material Sparepart</h2>
+            
+            <!-- Form Input Receiving -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+            <h3 class="text-sm font-semibold mb-4 text-slate-700 flex items-center gap-2">
+            <i class="ri-add-box-line text-blue-600"></i> Form Input Receiving
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Package ID (S)</label>
+            <input id="inboundPackageIdInput" type="text" placeholder="Scan Package ID" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Kode Material (SAP)</label>
+            <!-- Tambahkan oninput untuk auto-lookup data master -->
+            <input id="inboundSapInput" type="text" oninput="autofillMaterialInfo()" placeholder="Scan / Input SAP" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Nama Material</label>
+            <input id="inboundMaterialNameInput" type="text" placeholder="Otomatis dari Master" readonly class="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-100 text-slate-500 rounded-lg cursor-not-allowed focus:outline-none">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Batch</label>
+            <input id="inboundBatchInput" type="text" placeholder="Masukkan Batch" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Qty</label>
+            <input id="inboundSparepartQtyInput" type="number" min="1" placeholder="0" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Lokasi Grup</label>
+            <!-- Diubah ke input readonly agar terisi otomatis mengikuti Master Data -->
+            <input id="inboundBinInput" type="text" placeholder="Otomatis dari Master" readonly class="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-100 text-slate-500 rounded-lg cursor-not-allowed focus:outline-none">
+            </div>
+            </div>
+            <div class="mt-4 flex justify-end">
+            <button onclick="submitMaterialInbound()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-2">
+            <i class="ri-save-line"></i> Simpan Inbound
+            </button>
+            </div>
+            </div>
+            
+            
+            <!-- Running Table Inbound -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-slate-100">
+            <h3 class="text-xs font-semibold uppercase text-slate-500">Running Table Inbound Sparepart</h3>
+            </div>
+            <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+            <tr>
+            <th class="p-3.5 font-semibold">Tanggal</th>
+            <th class="p-3.5 font-semibold">Package ID</th>
+            <th class="p-3.5 font-semibold">Kode Material (SAP)</th>
+            <th class="p-3.5 font-semibold">Nama Material</th>
+            <th class="p-3.5 font-semibold">Batch</th>
+            <th class="p-3.5 font-semibold">Qty</th>
+            <th class="p-3.5 font-semibold">Lokasi Area</th>
+            </tr>
+            </thead>
+            <tbody id="inboundTableBody" class="divide-y divide-slate-100">
+            </tbody>
+            </table>
+            </div>
+            </div>
+            </div>
+            
+            
 
-    // ── UPDATE SPARKLINE (grafis garis)
-    const totalInbound    = parseFloat(document.getElementById('card-inbound-val')?.innerText) || 0;
-    const totalOutbound   = parseFloat(document.getElementById('card-outbound-val')?.innerText) || 0;
-    const totalFgInbound  = parseFloat(document.getElementById('card-fg-inbound-val')?.innerText) || 0;
-    const totalFgOutbound = parseFloat(document.getElementById('card-fg-outbound-val')?.innerText) || 0;
+            <!-- ================= PAGE TEMPLATE: INBOUND CONSUMABLE ================= -->
+            <div id="page-inbound-consumable" class="page-content hidden space-y-6">
+                <h2 class="text-xl font-bold text-slate-800">Inbound Material Consumable</h2>
+                <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+                    <h3 class="text-sm font-semibold mb-4 text-slate-700 flex items-center gap-2">
+                        <i class="ri-add-box-line text-blue-600"></i> Form Input Receiving Consumable
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">SKU</label>
+                            <input type="text" placeholder="SKU-..." class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg">
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Nama Item</label>
+                            <select class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white">
+                                <option>Bolpoin</option>
+                                <option>Spidol</option>
+                                <option>Note Sticky</option>
+                                <option>Kertas A4/HVS</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Lokasi</label>
+                            <input type="text" placeholder="Lokasi" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg">
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Qty</label>
+                            <input id="inboundConsumableQtyInput" type="number" min="1" placeholder="0" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg">
+                        </div>
+                    </div>
+                    <div class="mt-4 flex justify-end">
+                        <button onclick="submitConsumableInbound()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg">Simpan Inbound</button>
+                    </div>
+                </div>
 
-    addHistoryPoint('inbound',    totalInbound,    'sparkline-inbound');
-    addHistoryPoint('outbound',   totalOutbound,   'sparkline-outbound');
-    addHistoryPoint('fgInbound',  totalFgInbound,  'sparkline-fg-inbound');
-    addHistoryPoint('fgOutbound', totalFgOutbound, 'sparkline-fg-outbound');
-}
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100">
+                        <h3 class="text-xs font-semibold uppercase text-slate-500">Running Table Consumable</h3>
+                    </div>
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                            <tr>
+                                <th class="p-3.5">Tanggal</th>
+                                <th class="p-3.5">ID Transaksi</th>
+                                <th class="p-3.5">SKU</th>
+                                <th class="p-3.5">Nama</th>
+                                <th class="p-3.5">Lokasi</th>
+                                <th class="p-3.5">Qty</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
 
-/* ==========================================================================
-   11. STUB FUNCTION — Fitur Consumable & Refresh (belum diimplementasi penuh)
-   ========================================================================== */
+            <!-- ================= PAGE TEMPLATE: OUTBOUND PREPARATION ================= -->
+            <div id="page-outbound-prep" class="page-content hidden space-y-6">
+            <h2 class="text-xl font-bold text-slate-800">Outbound Material - Preparation Produksi</h2>
+            
+            <!-- Form Output Supply ke Produksi -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+            <h3 class="text-sm font-semibold mb-4 text-slate-700 flex items-center gap-2">
+            <i class="ri-checkbox-indeterminate-line text-orange-600"></i> Form Output Supply ke Produksi
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Package ID (S)</label>
+            <input id="outboundPackageIdInput" type="text" placeholder="Scan Package ID" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-orange-500">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Kode Material (SAP)</label>
+            <input id="outboundSapInput" type="text" placeholder="Otomatis" readonly class="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-100 text-slate-500 rounded-lg cursor-not-allowed focus:outline-none">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Nama Material</label>
+            <input id="outboundMaterialNameInput" type="text" placeholder="Otomatis" readonly class="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-100 text-slate-500 rounded-lg cursor-not-allowed focus:outline-none">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Batch</label>
+            <input id="outboundBatchInput" type="text" placeholder="Otomatis" readonly class="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-100 text-slate-500 rounded-lg cursor-not-allowed focus:outline-none">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Lokasi Asal</label>
+            <input id="outboundLocationInput" type="text" placeholder="Otomatis" readonly class="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-100 text-slate-500 rounded-lg cursor-not-allowed focus:outline-none">
+            </div>
+            <div>
+            <label class="text-xs font-medium text-slate-600 mb-1 block">Qty</label>
+            <input id="outboundSparepartQtyInput" type="number" placeholder="Otomatis" readonly class="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-100 text-slate-500 rounded-lg cursor-not-allowed focus:outline-none">
+            </div>
+            </div>
+            <div class="mt-4 flex justify-end">
+            <button onclick="submitMaterialOutbound()" class="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-2">
+            <i class="ri-send-plane-line"></i> Proses Outbound
+            </button>
+            </div>
+            </div>
+            
+            <!-- Running Table Outbound Preparation -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-slate-100">
+            <h3 class="text-xs font-semibold uppercase text-slate-500">Running Table Outbound Preparation</h3>
+            </div>
+            <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+            <tr>
+            <th class="p-3.5 font-semibold">Tanggal & Jam</th>
+            <th class="p-3.5 font-semibold">Package ID</th>
+            <th class="p-3.5 font-semibold">Kode Material (SAP)</th>
+            <th class="p-3.5 font-semibold">Nama Material</th>
+            <th class="p-3.5 font-semibold">Batch</th>
+            <th class="p-3.5 font-semibold">Qty</th>
+            <th class="p-3.5 font-semibold">Lokasi Asal</th>
+            </tr>
+            </thead>
+            <tbody id="outboundTableBody" class="divide-y divide-slate-100">
+            </tbody>
+            </table>
+            </div>
+            </div>
+            </div>
+            
+            
 
-// Refresh data inventory (placeholder — nanti di-wire ke backend)
-function fetchInventoryData() {
-    showToast('Refresh data — belum ada backend', 'info');
-}
+            <!-- ================= PAGE TEMPLATE: OUTBOUND CONSUMABLE ================= -->
+            <div id="page-outbound-consumable" class="page-content hidden space-y-6">
+                <h2 class="text-xl font-bold text-slate-800">Outbound Material - Consumable</h2>
+                <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+                    <h3 class="text-sm font-semibold mb-4 text-slate-700">Form Pengeluaran Consumable</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">SKU</label>
+                            <input type="text" placeholder="SKU" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg">
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Nama</label>
+                            <select class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white">
+                                <option>Bolpoin</option>
+                                <option>Spidol</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Lokasi</label>
+                            <input type="text" placeholder="RAK" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg">
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Qty</label>
+                            <input id="outboundConsumableQtyInput" type="number" min="1" placeholder="0" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg">
+                        </div>
+                    </div>
+                    <div class="mt-4 flex justify-end">
+                        <button onclick="submitConsumableOutbound()" class="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-lg">Proses Outbound</button>
+                    </div>
+                </div>
 
-// Submit Inbound Consumable (placeholder)
-function submitConsumableInbound() {
-    const qtyInput = document.getElementById('inboundConsumableQtyInput');
-    const qty = parseInt(qtyInput?.value) || 0;
-    if (qty <= 0) {
-        showToast('Masukkan Qty yang valid!', 'warning');
-        return;
-    }
-    showToast(`Consumable Inbound ${qty} Items (placeholder)`, 'info');
-    if (qtyInput) qtyInput.value = '';
-}
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100">
+                        <h3 class="text-xs font-semibold uppercase text-slate-500">Running Table Outbound Consumable</h3>
+                    </div>
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                            <tr>
+                                <th class="p-3.5">Tanggal</th>
+                                <th class="p-3.5">ID Transaksi</th>
+                                <th class="p-3.5">SKU</th>
+                                <th class="p-3.5">Nama</th>
+                                <th class="p-3.5">Lokasi</th>
+                                <th class="p-3.5">Qty</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
 
-// Submit Outbound Consumable (placeholder)
-function submitConsumableOutbound() {
-    const qtyInput = document.getElementById('outboundConsumableQtyInput');
-    const qty = parseInt(qtyInput?.value) || 0;
-    if (qty <= 0) {
-        showToast('Masukkan Qty yang valid!', 'warning');
-        return;
-    }
-    showToast(`Consumable Outbound ${qty} Items (placeholder)`, 'info');
-    if (qtyInput) qtyInput.value = '';
-}
+            <!-- ================= PAGE TEMPLATE: FG INBOUND ================= -->
+            <div id="page-fg-inbound" class="page-content hidden space-y-6">
+                <h2 class="text-xl font-bold text-slate-800">Finishgood - Inbound</h2>
+                <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+                    <h3 class="text-sm font-semibold mb-4 text-slate-700 flex items-center gap-2">
+                        <i class="ri-add-box-line text-emerald-600"></i> Form Input Engine (Produksi)
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Engine ID</label>
+                            <select id="fgModelEngine" onchange="syncFgModel()" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-500 bg-white">
+                                <option value="ZQD">ZQD</option>
+                                <option value="ZQB">ZQB</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Pallet ID</label>
+                            <select id="fgModelPallet" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:border-emerald-500">
+                                <option value="ZQD">ZQD</option>
+                                <option value="ZQB">ZQB</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block flex items-center justify-between">
+                                <span>Jumlah Engine (Pcs)</span>
+                            </label>
+                            <div class="relative">
+                                <input type="number" id="fgEngineQtyPcs" oninput="calculateFgQty()" min="1" placeholder="Masukkan jumlah pcs" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-500">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
+                        <span class="text-xs text-slate-500">Pallet Terpakai:</span>
+                        <span id="fgTotalQtyDisplay" class="text-sm font-semibold text-black-600">-</span>
+                    </div>
+
+                    <div class="mt-4 flex justify-end">
+                        <button onclick="submitFgInbound()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 shadow-sm">
+                           Submit
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100 flex justify-between items-center">
+                        <h3 class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Running Table FinishGood Inbound</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                                <tr>
+                                    <th class="p-3.5 font-semibold">Tanggal</th>
+                                    <th class="p-3.5 font-semibold">ID Transaksi</th>
+                                    <th class="p-3.5 font-semibold">Engine ID</th>
+                                    <th class="p-3.5 font-semibold">Pallet ID</th>
+                                    <th class="p-3.5 font-semibold">Qty</th>
+                                    <th class="p-3.5 font-semibold">Pallet Terpakai</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fgInboundTableBody" class="divide-y divide-slate-100 text-slate-700 whitespace-nowrap">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= PAGE TEMPLATE: FG OUTBOUND ================= -->
+            <div id="page-fg-outbound" class="page-content hidden space-y-6">
+                <h2 class="text-xl font-bold text-slate-800">Finishgood - Outbound</h2>
+                <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+                    <h3 class="text-sm font-semibold mb-4 text-slate-700 flex items-center gap-2">
+                        <i class="ri-checkbox-indeterminate-line text-rose-600"></i> Form Output Engine
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Engine ID</label>
+                            <select id="fgOutModelEngine" onchange="syncFgOutModel()" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500 bg-white">
+                                <option value="ZQD">ZQD</option>
+                                <option value="ZQB">ZQB</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Pallet ID</label>
+                            <select id="fgOutModelPallet" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:border-rose-500">
+                                <option value="ZQD">ZQD</option>
+                                <option value="ZQB">ZQB</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block flex items-center justify-between">
+                                <span>Jumlah Engine (Pcs)</span>
+                            </label>
+                            <div class="relative">
+                                <input type="number" id="fgOutEngineQtyPcs" oninput="calculateFgOutQty()" min="1" placeholder="Masukkan jumlah pcs" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
+                        <span class="text-xs text-slate-500">Pallet Kosong:</span>
+                        <span id="fgOutTotalQtyDisplay" class="text-sm font-semibold text-black-600">-</span>
+                    </div>
+
+                    <div class="mt-4 flex justify-end">
+                        <button onclick="submitFgOutbound()" class="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 shadow-sm">
+                          Submit
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100 flex justify-between items-center">
+                        <h3 class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Running Table FinishGood Outbound</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                                <tr>
+                                    <th class="p-3.5 font-semibold">Tanggal</th>
+                                    <th class="p-3.5 font-semibold">ID Transaksi</th>
+                                    <th class="p-3.5 font-semibold">Engine ID</th>
+                                    <th class="p-3.5 font-semibold">Pallet ID</th>
+                                    <th class="p-3.5 font-semibold">Qty</th>
+                                    <th class="p-3.5 font-semibold">Pallet Kosong</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fgOutboundTableBody" class="divide-y divide-slate-100 text-slate-700 whitespace-nowrap">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+					
+					<!-- ================= PAGE TEMPLATE: MASTER MATERIAL ================= -->
+					<div id="page-master-material" class="page-content hidden space-y-6">
+					<h2 class="text-xl font-bold text-slate-800">Master Data Material Sparepart</h2>
+					
+					<!-- Form Input / Edit Material -->
+					<div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+					<h3 class="text-sm font-semibold mb-4 text-slate-700 flex items-center gap-2">
+					<i class="ri-add-circle-line text-blue-600"></i> Form Tambah Material
+					</h3>
+					<div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Kode Material (SAP)</label>
+					<input id="masterSapInput" type="number" placeholder="Contoh: 14313141-00" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Nama Material</label>
+					<input id="masterMaterialNameInput" type="text" placeholder="Contoh: Piston Rod Std" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Grup Area</label>
+					<select id="masterGroupInput" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 bg-white">
+					<option value="" disabled selected>Pilih Grup</option>
+					<option value="Grup 1">Grup 1</option>
+					<option value="Grup 2">Grup 2</option>
+					<option value="Grup 3">Grup 3</option>
+					<option value="Grup 4">Grup 4</option>
+					<option value="Grup 5">Grup 5</option>
+					<option value="Grup 6">Grup 6</option>
+					</select>
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Model Engine</label>
+					<select id="masterModelInput" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 bg-white">
+					<option value="" disabled selected>Pilih Model</option>
+					<option value="ZQD">Model ZQD</option>
+					<option value="ZQB">Model ZQB</option>
+					</select>
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Qty per Box (SNP)</label>
+					<input id="masterSnpInput" type="number" min="1" placeholder="Contoh: 50" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+					</div>
+					</div>
+					<div class="mt-4 flex justify-end gap-2">
+					<button type="button" class="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-lg transition-colors">Reset</button>
+					<button onclick="submitMasterMaterial()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-2">
+					<i class="ri-save-line"></i> Simpan Material
+					</button>
+					</div>
+					</div>
+					
+					<!-- Container Grid 2 Tabel Terpisah -->
+					<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+					
+					<!-- TABEL 1: MASTER MATERIAL MODEL ZQD -->
+					<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+					<div class="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between gap-3 items-center bg-slate-50/50">
+					<div class="flex items-center gap-2">
+					<h3 class="text-xs font-bold uppercase text-slate-700">Master Material - Model ZQD</h3>
+					</div>
+					<div class="w-full sm:w-48">
+					<input type="text" placeholder="Cari Part ZQD..." class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 bg-white">
+					</div>
+					</div>
+					<div class="overflow-x-auto flex-1">
+					<table class="w-full text-left text-xs">
+					<thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+					<tr>
+					<th class="p-3 font-semibold">No</th>
+					<th class="p-3 font-semibold">Kode SAP</th>
+					<th class="p-3 font-semibold">Nama Material</th>
+					<th class="p-3 font-semibold">Grup</th>
+					<th class="p-3 font-semibold text-center">Qty/Box</th>
+					<th class="p-3 font-semibold text-center">Aksi</th>
+					</tr>
+					</thead>
+					<tbody id="tableBodyMaterialZQD" class="divide-y divide-slate-100">
+					<!-- Data Material Model ZQD dirender di sini -->
+					</tbody>
+					</table>
+					</div>
+					</div>
+					
+					<!-- TABEL 2: MASTER MATERIAL MODEL ZQB -->
+					<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+					<div class="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between gap-3 items-center bg-slate-50/50">
+					<div class="flex items-center gap-2">
+					<h3 class="text-xs font-bold uppercase text-slate-700">Master Material - Model ZQB</h3>
+					</div>
+					<div class="w-full sm:w-48">
+					<input type="text" placeholder="Cari Part ZQB..." class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-500 bg-white">
+					</div>
+					</div>
+					<div class="overflow-x-auto flex-1">
+					<table class="w-full text-left text-xs">
+					<thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+					<tr>
+					<th class="p-3 font-semibold">No</th>
+					<th class="p-3 font-semibold">Kode SAP</th>
+					<th class="p-3 font-semibold">Nama Material</th>
+					<th class="p-3 font-semibold">Grup</th>
+					<th class="p-3 font-semibold text-center">Qty/Box</th>
+					<th class="p-3 font-semibold text-center">Aksi</th>
+					</tr>
+					</thead>
+					<tbody id="tableBodyMaterialZQB" class="divide-y divide-slate-100">
+					<!-- Data Material Model ZQB dirender di sini -->
+					</tbody>
+					</table>
+					</div>
+					</div>
+					
+					</div>
+					</div>
+					
+					
+					<!-- ================= PAGE TEMPLATE: MASTER BOM ================= -->
+					<div id="page-master-bom" class="page-content hidden space-y-6">
+					<h2 class="text-xl font-bold text-slate-800">Master Data Bill of Materials</h2>
+					
+					<!-- Form Setting Resep Engine -->
+					<div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+					<h3 class="text-sm font-semibold mb-4 text-slate-700 flex items-center gap-2">
+					<i class="ri-git-merge-line text-blue-600"></i> Form Resep Part Engine
+					</h3>
+					<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Model Engine</label>
+					<select id="bomEngineModelInput" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 bg-white">
+					<option value="" disabled selected>Pilih Model Engine</option>
+					<option value="ZQD">Engine ZQD</option>
+					<option value="ZQB">Engine ZQB</option>
+					</select>
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Kode Material (SAP)</label>
+					<input id="bomSapInput" type="text" placeholder="Scan / Input SAP" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Nama Material</label>
+					<input id="bomMaterialNameInput" type="text" placeholder="Otomatis dari Master" readonly class="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-100 text-slate-500 rounded-lg cursor-not-allowed">
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Qty per 1 Engine</label>
+					<input id="bomQtyInput" type="number" min="1" placeholder="0" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+					</div>
+					</div>
+					<div class="mt-4 flex justify-end gap-2">
+					<button type="button" class="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-lg transition-colors">Reset</button>
+					<button onclick="submitBomItem()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-2">
+					<i class="ri-add-line"></i> Tambahkan Part ke BOM
+					</button>
+					</div>
+					</div>
+					
+					<!-- Container Grid 2 Tabel BOM (ZQD & ZQB) -->
+					<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+					
+					<!-- TABEL 1: BOM MODEL ZQD -->
+					<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+					<div class="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between gap-3 items-center bg-slate-50/50">
+					<div class="flex items-center gap-2">
+					<h3 class="text-xs font-bold uppercase text-slate-700">Resep BOM - Model ZQD</h3>
+					</div>
+					<div class="w-full sm:w-48">
+					<input type="text" placeholder="Cari Part ZQD..." class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 bg-white">
+					</div>
+					</div>
+					<div class="overflow-x-auto flex-1">
+					<table class="w-full text-left text-xs">
+					<thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+					<tr>
+					<th class="p-3 font-semibold">Kode SAP</th>
+					<th class="p-3 font-semibold">Nama Material</th>
+					<th class="p-3 font-semibold text-center">Qty / Engine</th>
+					<th class="p-3 font-semibold text-center">Aksi</th>
+					</tr>
+					</thead>
+					<tbody id="tableBodyBomZQD" class="divide-y divide-slate-100">
+					<!-- Data BOM Model ZQD dirender di sini -->
+					</tbody>
+					</table>
+					</div>
+					</div>
+					
+					<!-- TABEL 2: BOM MODEL ZQB -->
+					<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+					<div class="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between gap-3 items-center bg-slate-50/50">
+					<div class="flex items-center gap-2">
+					<h3 class="text-xs font-bold uppercase text-slate-700">Resep BOM - Model ZQB</h3>
+					</div>
+					<div class="w-full sm:w-48">
+					<input type="text" placeholder="Cari Part ZQB..." class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-500 bg-white">
+					</div>
+					</div>
+					<div class="overflow-x-auto flex-1">
+					<table class="w-full text-left text-xs">
+					<thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+					<tr>
+					<th class="p-3 font-semibold">Kode SAP</th>
+					<th class="p-3 font-semibold">Nama Material</th>
+					<th class="p-3 font-semibold text-center">Qty / Engine</th>
+					<th class="p-3 font-semibold text-center">Aksi</th>
+					</tr>
+					</thead>
+					<tbody id="tableBodyBomZQB" class="divide-y divide-slate-100">
+					<!-- Data BOM Model ZQB dirender di sini -->
+					</tbody>
+					</table>
+					</div>
+					</div>
+					
+					</div>
+					</div>
+					
+					<!-- ================= PAGE TEMPLATE: PLANNING PRODUKSI ================= -->
+					<div id="page-planning-produksi" class="page-content hidden space-y-6">
+					<h2 class="text-xl font-bold text-slate-800">Planning Target Produksi (PPIC)</h2>
+					
+					<!-- Form Input Target Harian -->
+					<div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+					<h3 class="text-sm font-semibold mb-4 text-slate-700 flex items-center gap-2">
+					<i class="ri-calendar-event-line text-blue-600"></i> Form Schedule Target Harian
+					</h3>
+					<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Tanggal Produksi</label>
+					<input id="planDateInput" type="date" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Model Engine</label>
+					<select id="planModelInput" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 bg-white">
+					<option value="" disabled selected>Pilih Model Engine</option>
+					<option value="ZQD">Engine ZQD</option>
+					<option value="ZQB">Engine ZQB</option>
+					</select>
+					</div>
+					<div>
+					<label class="text-xs font-medium text-slate-600 mb-1 block">Target Qty</label>
+					<input id="planQtyInput" type="number" min="1" placeholder="Contoh: 80" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+					</div>
+					</div>
+					<div class="mt-4 flex justify-end gap-2">
+					<button type="button" class="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-lg transition-colors">Reset</button>
+					<button onclick="submitPlanningProduksi()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-2">
+					<i class="ri-check-double-line"></i> Generate Antrean Picking
+					</button>
+					</div>
+					</div>
+					
+					<!-- Running Table Planning Harian -->
+					<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+					<div class="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-3">
+					<h3 class="text-xs font-semibold uppercase text-slate-500">Jadwal Target Produksi Harian</h3>
+					<div class="w-full sm:w-64">
+					<input type="text" placeholder="Cari tanggal / model..." class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+					</div>
+					</div>
+					<div class="overflow-x-auto">
+					<table class="w-full text-left text-xs">
+					<thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+					<tr>
+					<th class="p-3.5 font-semibold">Tanggal</th>
+					<th class="p-3.5 font-semibold">Model Engine</th>
+					<th class="p-3.5 font-semibold">Target (Unit)</th>
+					<th class="p-3.5 font-semibold">Total Kebutuhan Part</th>
+					<th class="p-3.5 font-semibold">Status Picking</th>
+					<th class="p-3.5 font-semibold text-center">Aksi</th>
+					</tr>
+					</thead>
+					<tbody id="planningTableBody" class="divide-y divide-slate-100">
+					<!-- Data Schedule Planning akan dirender di sini -->
+					</tbody>
+					</table>
+					</div>
+					</div>
+					</div>
+					
+
+            <!-- ================= PAGE TEMPLATE: MANAJEMEN PALLET ================= -->
+            <div id="page-in-out-pallet-engine" class="page-content hidden space-y-6">
+                <h2 class="text-xl font-bold text-slate-800">Manajemen Pallet Engine</h2>
+                
+                <div class="flex border-b border-slate-200 gap-4">
+                    <button id="btn-tab-rak-input" onclick="switchRakTab('input')" class="pb-2 text-sm font-semibold border-b-2 border-blue-600 text-blue-600 transition-all flex items-center gap-2">
+                        <i class="ri-arrow-down-circle-line"></i> Input
+                    </button>
+                    <button id="btn-tab-rak-output" onclick="switchRakTab('output')" class="pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition-all flex items-center gap-2">
+                        <i class="ri-arrow-up-circle-line"></i> Output
+                    </button>
+                </div>
+
+                <!-- TAB INPUT MANAJEMEN PALLET -->
+                <div id="tab-rak-input" class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm space-y-4">
+                    <h3 class="text-sm font-semibold text-slate-700">Penerimaan Pallet Engine</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Pallet ID</label>
+                            <select id="palletInputId" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 bg-white">
+                                <option value="ZQD">ZQD</option>
+                                <option value="ZQB">ZQB</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Qty</label>
+                            <input type="number" id="palletInputQty" min="1" placeholder="Masukkan jumlah pallet" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Catatan (Opsional)</label>
+                            <input type="text" id="palletInputCatatan" placeholder="Catatan tambahan..." class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500">
+                        </div>
+                    </div>
+                    <div class="flex justify-end">
+                        <button onclick="submitPalletInput()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors">Submit</button>
+                    </div>
+                </div>
+
+                <!-- TAB OUTPUT MANAJEMEN PALLET -->
+                <div id="tab-rak-output" class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm hidden space-y-4">
+                    <h3 class="text-sm font-semibold text-slate-700">Pengeluaran Pallet Engine (Recycle / NG)</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Pallet ID</label>
+                            <select id="palletOutputId" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500 bg-white">
+                                <option value="ZQD">ZQD</option>
+                                <option value="ZQB">ZQB</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Pilihan Output</label>
+                            <select id="palletOutputType" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500 bg-white">
+                                <option value="Recycle">Pallet Recycle</option>
+                                <option value="NG">Pallet NG</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Qty</label>
+                            <input type="number" id="palletOutputQty" min="1" placeholder="Masukkan jumlah pallet" class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500">
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 mb-1 block">Catatan (Opsional)</label>
+                            <input type="text" id="palletOutputCatatan" placeholder="Catatan tambahan..." class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500">
+                        </div>
+                    </div>
+                    <div class="flex justify-end">
+                        <button onclick="submitPalletOutput()" class="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition-colors">Submit</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= PAGE TEMPLATE: DIRECT ANTREAN PICKING ================= -->
+            <div id="page-antrean-picking" class="page-content hidden space-y-4">
+                <h2 class="text-xl font-bold text-slate-800">Antrean Picking</h2>
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-50 text-slate-500 border-b border-slate-200">
+                            <tr>
+                                <th class="p-3.5">ID Order</th>
+                                <th class="p-3.5">Prioritas</th>
+                                <th class="p-3.5">Item</th>
+                                <th class="p-3.5">Lokasi Target</th>
+                                <th class="p-3.5">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ================= PAGE TEMPLATE: DIRECT PENGATURAN ================= -->
+            <div id="page-pengaturan" class="page-content hidden space-y-4">
+                <h2 class="text-xl font-bold text-slate-800">Pengaturan Sistem</h2>
+                <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-4">
+                    <div>
+                        <h3 class="text-sm font-semibold text-slate-700">Konfigurasi Warehouse</h3>
+                        <p class="text-xs text-slate-400">Atur preferensi rak, notifikasi stok minimum, dan sistem wms.</p>
+                    </div>
+                    <div class="space-y-2">
+                        <label class="flex items-center gap-2 text-xs text-slate-600">
+                            <input type="checkbox" checked class="rounded border-slate-300 text-blue-600"> Synchronize Live Running Monitor Automatic
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-slate-600">
+                            <input type="checkbox" checked class="rounded border-slate-300 text-blue-600"> Sound Alert on New Picking Task
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+<script src="js/app.js"></script>
+</body>
+</html>

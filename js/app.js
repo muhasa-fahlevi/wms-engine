@@ -420,13 +420,17 @@ function openWidgetRunning(title) {
     }
 
     // 3. Clone data dari tabel sumber (kalau ada)
-    if (sourceTbody && sourceTbody.children.length > 0) {
-    tbody.innerHTML = sourceTbody.innerHTML;
-    } else {
-    // Fallback: fetch dari API (nanti)
-    // const data = await API.getInbound();
-    // tbody.innerHTML = renderRows(data, config.headers.length);
-    tbody.innerHTML = `<tr><td colspan="${config.headers.length}" class="p-6 text-center text-slate-400">Belum ada data untuk kategori ini.</td></tr>`;
+    const tbody = document.getElementById('widget-table-body');
+    if (tbody) {
+        const sourceTbody = config.sourceTbody ? document.getElementById(config.sourceTbody) : null;
+
+        if (sourceTbody && sourceTbody.children.length > 0) {
+            // Copy semua baris dari tbody sumber
+            tbody.innerHTML = sourceTbody.innerHTML;
+        } else {
+            // Placeholder kalau belum ada data
+            tbody.innerHTML = `<tr><td colspan="${config.headers.length}" class="p-6 text-center text-slate-400">Belum ada data untuk kategori ini.</td></tr>`;
+        }
     }
 
     // 4. Navigate

@@ -1368,3 +1368,36 @@ function syncWidgetCounters() {
     addHistoryPoint('fgInbound',  totalFgInbound,  'sparkline-fg-inbound');
     addHistoryPoint('fgOutbound', totalFgOutbound, 'sparkline-fg-outbound');
 }
+
+/* ==========================================================================
+   11. STUB FUNCTION — Fitur Consumable & Refresh (belum diimplementasi penuh)
+   ========================================================================== */
+
+// Refresh data inventory (placeholder — nanti di-wire ke backend)
+function fetchInventoryData() {
+    showToast('Refresh data — belum ada backend', 'info');
+}
+
+// Submit Inbound Consumable (placeholder)
+function submitConsumableInbound() {
+    const qtyInput = document.getElementById('inboundConsumableQtyInput');
+    const qty = parseInt(qtyInput?.value) || 0;
+    if (qty <= 0) {
+        showToast('Masukkan Qty yang valid!', 'warning');
+        return;
+    }
+    showToast(`Consumable Inbound ${qty} Items (placeholder)`, 'info');
+    if (qtyInput) qtyInput.value = '';
+}
+
+// Submit Outbound Consumable (placeholder)
+function submitConsumableOutbound() {
+    const qtyInput = document.getElementById('outboundConsumableQtyInput');
+    const qty = parseInt(qtyInput?.value) || 0;
+    if (qty <= 0) {
+        showToast('Masukkan Qty yang valid!', 'warning');
+        return;
+    }
+    showToast(`Consumable Outbound ${qty} Items (placeholder)`, 'info');
+    if (qtyInput) qtyInput.value = '';
+}
